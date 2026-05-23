@@ -1,2 +1,19 @@
-fastapi==0.110.0
-uvicorn==0.28.0
+fastapi>=0.115.0
+uvicorn>=0.30.0
+python-dotenv>=1.0.1
+pydantic-settings>=2.4.0
+
+# LlamaIndex Core & Integrations (Modern 2026 Stack)
+llama-index-core>=0.14.0
+llama-index-llms-ollama>=0.1.2
+llama-index-embeddings-huggingface>=0.5.0
+llama-index-vector-stores-qdrant>=0.2.0
+
+# Vector DB & AI Models (2026 Releases)
+qdrant-client>=1.18.0
+sentence-transformers>=5.5.0
+accelerate>=0.34.0
+torch>=2.6.0
+
+# PDF Processing
+pypdf>=5.0.0
