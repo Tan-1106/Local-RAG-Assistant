@@ -12,6 +12,10 @@ class Settings(BaseSettings):
     QDRANT_COLLECTION_NAME: str
     EMBEDDING_MODEL: str
     EMBEDDING_DIMENSION: int
+    ALLOWED_ORIGINS: str = "http://localhost:3000"
+    DATA_DIR: str = "/app/data"
+    DOCSTORE_PATH: str = "./storage/docstore.json"
+    QDRANT_PREFER_GRPC: bool = False
 
     model_config = SettingsConfigDict(
         env_file=str(ENV_PATH) if ENV_PATH.exists() else ".env",

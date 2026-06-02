@@ -1,5 +1,6 @@
 import os
 
+from app.config import settings
 from app.db.qdrant_store import init_qdrant_vector_store
 from llama_index.core.storage.docstore import SimpleDocumentStore
 from llama_index.core.node_parser import HierarchicalNodeParser, get_leaf_nodes
@@ -7,14 +8,17 @@ from llama_index.core import SimpleDirectoryReader, StorageContext, VectorStoreI
 
 
 # Function to ingest documents into the vector store index
-def ingest_documents(data_path: str = "/data"):
+def ingest_documents(data_path: str = None):
+    # Determine the directory path
+    path = data_path or settings.DATA_DIR
+    
     # Check if the data directory exists and contains documents
-    if not os.path.exists(data_path) or len(os.listdir(data_path)) == 0:
-        print(f"No documents found in {data_path}. Please add documents to ingest.")
+    if not os.path.exists(path) or len(os.listdir(path)) == 0:
+        print(f"No documents found in {path}. Please add documents to ingest.")
         return
     
     # Load documents from the specified directory
-    documents = SimpleDirectoryReader(data_path).load_data()
+    documents = SimpleDirectoryReader(path).load_data()
     
     # Initialize the Hierarchical Node Parser
     # Note: Using class method .from_defaults() and providing chunk_sizes list
@@ -48,7 +52,9 @@ def ingest_documents(data_path: str = "/data"):
     )
     
     # Persist the docstore for AutoMergingRetriever to use later
-    os.makedirs("./storage", exist_ok=True)
-    docstore.persist("./storage/docstore.json")
+    docstore_dir = os.path.dirname(settings.DOCSTORE_PATH)
+    if docstore_dir:
+        os.makedirs(docstore_dir, exist_ok=True)
+    docstore.persist(settings.DOCSTORE_PATH)
     
     return index

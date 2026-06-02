@@ -1,4 +1,6 @@
 import os
+from app.config import settings
+
 from app.db.qdrant_store import init_qdrant_vector_store
 from llama_index.core.retrievers import AutoMergingRetriever
 from llama_index.core import VectorStoreIndex, StorageContext
@@ -20,7 +22,7 @@ def get_chat_query_engine():
     base_retriever = index.as_retriever(similarity_top_k=12)
     
     # Load document store from static file saved during ingest step to access Parent Nodes
-    docstore_path = "./storage/docstore.json"
+    docstore_path = settings.DOCSTORE_PATH
     if os.path.exists(docstore_path):
         docstore = SimpleDocumentStore.from_persist_path(docstore_path)
     else:

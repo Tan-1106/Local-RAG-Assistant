@@ -7,7 +7,7 @@ from llama_index.vector_stores.qdrant import QdrantVectorStore
 # Initialize the Qdrant vector store
 def get_qdrant_client() -> qdrant_client.QdrantClient:
     return qdrant_client.QdrantClient(
-        prefer_grpc=True,
+        prefer_grpc=settings.QDRANT_PREFER_GRPC,
         url=settings.QDRANT_URL,
     )
 
