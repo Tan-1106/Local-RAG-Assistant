@@ -6,8 +6,14 @@ from app.schemas.chat import ChatRequest, ChatResponse, SourceNode
 from app.services.chat_engine import answer_legal_question
 from app.services.rag_pipeline import ingest_documents, delete_document
 from app.config import settings
+from app.api.auth import router as auth_router
+from app.api.sessions import router as session_router
 
 router = APIRouter()
+router.include_router(auth_router)
+router.include_router(session_router)
+
+
 
 @router.post("/chat", response_model=ChatResponse)
 def chat_endpoint(request: ChatRequest):

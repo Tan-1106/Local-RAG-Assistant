@@ -4,14 +4,20 @@ from contextlib import asynccontextmanager
 from app.services.ai_logic import initialize_ai
 from app.config import settings
 from app.api.endpoints import router as api_router
+from app.db.session import engine, Base
+from app.models import all_models  # Import to register models
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup logic
+    # Create DB tables on startup
+    Base.metadata.create_all(bind=engine)
+    
+    # Startup AI logic
     initialize_ai()
     yield
     # Shutdown logic (clean up if any)
     pass
+
 
 app = FastAPI(title="Legal Assistant API", lifespan=lifespan)
 
