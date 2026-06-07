@@ -1,7 +1,9 @@
 import qdrant_client
 from app.config                         import settings
 from llama_index.vector_stores.qdrant   import QdrantVectorStore
+from app.logger                         import get_logger
 
+logger = get_logger(__name__)
 
 # Initialize the Qdrant vector store
 def get_qdrant_client() -> qdrant_client.QdrantClient:
@@ -31,5 +33,5 @@ def init_qdrant_vector_store() -> QdrantVectorStore:
         collection_name=settings.QDRANT_COLLECTION_NAME,
     )
     
-    print("Initialized Qdrant Vector Store: ", settings.QDRANT_COLLECTION_NAME)
+    logger.info(f"Initialized Qdrant Vector Store: {settings.QDRANT_COLLECTION_NAME}")
     return qdrant_vector_store

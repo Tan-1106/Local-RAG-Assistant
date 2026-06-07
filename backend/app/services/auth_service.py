@@ -148,3 +148,24 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
     if user is None:
         raise credentials_exception
     return user
+
+
+def get_current_admin_user(current_user: User = Depends(get_current_user)) -> User:
+    """
+    FastAPI dependency to verify that the current user has the 'admin' role.
+
+    Args:
+        current_user (User): The authenticated user.
+
+    Returns:
+        User: The authenticated admin User object.
+
+    Raises:
+        HTTPException: If the user role is not 'admin'.
+    """
+    if current_user.role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="The user doesn't have enough privileges"
+        )
+    return current_user

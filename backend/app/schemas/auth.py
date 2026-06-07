@@ -46,6 +46,7 @@ class UserResponse(BaseModel):
     """
     id: int
     username: str
+    role: str = "user"
 
     model_config = {
         "from_attributes": True

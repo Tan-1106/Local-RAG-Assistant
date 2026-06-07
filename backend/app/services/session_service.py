@@ -3,13 +3,16 @@ from typing                                 import List, Dict
 from sqlalchemy.orm                         import Session
 from fastapi                                import HTTPException, status
 from llama_index.core.chat_engine           import ContextChatEngine
+from llama_index.core.retrievers            import AutoMergingRetriever
 from llama_index.core.llms                  import ChatMessage as LlamaChatMessage, MessageRole
 from app.models.all_models                  import ChatSession, ChatMessage
 from app.schemas.session                    import SessionCreate
 from app.schemas.chat                       import ChatRequest, ChatResponse, SourceNode
 from app.repositories.session_repository    import SessionRepository
 from app.repositories.message_repository    import MessageRepository
+from app.logger                             import get_logger
 
+logger = get_logger(__name__)
 
 class SessionService:
     """
@@ -29,7 +32,9 @@ class SessionService:
         Returns:
             ChatSession: The newly created ChatSession object.
         """
-        return SessionRepository.create(db, user_id, session_in.title)
+        session = SessionRepository.create(db, user_id, session_in.title)
+        db.commit()
+        return session
 
     @staticmethod
     def list_sessions(db: Session, user_id: int) -> List[ChatSession]:
@@ -120,7 +125,9 @@ class SessionService:
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Chat session not found"
             )
-        return SessionRepository.update_title(db, session, new_title)
+        updated_session = SessionRepository.update_title(db, session, new_title)
+        db.commit()
+        return updated_session
 
     @staticmethod
     def process_chat_message(
@@ -128,7 +135,7 @@ class SessionService:
         session_id: str, 
         user_id: int, 
         request: ChatRequest, 
-        chat_engine: ContextChatEngine
+        retriever: AutoMergingRetriever
     ) -> ChatResponse:
         """
         Processes an incoming user chat message, queries the AI engine with context,
@@ -139,7 +146,7 @@ class SessionService:
             session_id (str): The ID of the target chat session.
             user_id (int): The ID of the user sending the message.
             request (ChatRequest): Payload containing the user's question.
-            chat_engine (ContextChatEngine): The pre-initialized stateful chat engine.
+            retriever (AutoMergingRetriever): The initialized stateless retriever.
 
         Returns:
             ChatResponse: The AI response containing the textual answer and referenced sources.
@@ -165,6 +172,10 @@ class SessionService:
                 role = MessageRole.USER if msg.role == "user" else MessageRole.ASSISTANT
                 llama_history.append(LlamaChatMessage(role=role, content=msg.content))
                 
+            chat_engine = ContextChatEngine.from_defaults(
+                retriever=retriever,
+                verbose=True
+            )
             response = chat_engine.chat(request.question, chat_history=llama_history)
             
             # Extract sources
@@ -206,7 +217,7 @@ class SessionService:
                     SessionRepository.update_title(db, session, title_candidate)
                 except Exception as e:
                     # Fallback to simple title if AI generation fails
-                    print(f"Warning: AI title generation failed: {e}")
+                    logger.warning(f"Warning: AI title generation failed: {e}")
                     words = request.question.split()
                     title_candidate = " ".join(words[:6])
                     if len(title_candidate) > 40:
@@ -216,20 +227,23 @@ class SessionService:
             # 7. Map to Pydantic ChatResponse
             sources_response = [
                 SourceNode(
-                    score=source["score"],
-                    text=source["text"],
-                    metadata=source["metadata"]
-                )
-                for source in sources
+                    score=s["score"],
+                    text=s["text"],
+                    metadata=s["metadata"]
+                ) for s in sources
             ]
+            
+            # Commit all db changes for this round
+            db.commit()
             
             return ChatResponse(
                 answer=answer,
                 sources=sources_response
             )
+            
         except Exception as e:
-            db.rollback()
+            logger.error(f"Error processing chat message: {e}")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=str(e)
+                detail=f"An error occurred while communicating with AI: {e}"
             )

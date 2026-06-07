@@ -4,6 +4,9 @@ from app.config                             import settings
 from llama_index.llms.ollama                import Ollama
 from llama_index.core                       import Settings as LlamaIndexSettings
 from llama_index.embeddings.huggingface     import HuggingFaceEmbedding
+from app.logger                               import get_logger
+
+logger = get_logger(__name__)
 
 
 def initialize_ai():
@@ -12,7 +15,7 @@ def initialize_ai():
     Configures Ollama LLM and HuggingFace Embedding model. Also patches
     a known position_ids buffer corruption issue in SentenceTransformers.
     """
-    print("🚀 [AI Logic] Starting AI System initialization...")
+    logger.info("🚀 [AI Logic] Starting AI System initialization...")
     nest_asyncio.apply()
 
     # 1. LLM Configuration (Qwen2.5:7b via Ollama)
@@ -26,7 +29,7 @@ def initialize_ai():
             "Bạn CHỈ ĐƯỢC PHÉP trả lời bằng Tiếng Việt. Tuyệt đối không sử dụng tiếng Trung hoặc bất kỳ ngôn ngữ nào khác."
         )
     )
-    print(f"✅ [AI Logic] Connected to LLM: {settings.OLLAMA_MODEL}")
+    logger.info(f"✅ [AI Logic] Connected to LLM: {settings.OLLAMA_MODEL}")
 
     # 2. Embedding Model Configuration
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -51,9 +54,9 @@ def initialize_ai():
                 torch.arange(max_positions, device=embeddings.position_ids.device),
                 persistent=False
             )
-            print("🚀 [AI Logic] Successfully patched embedding model position_ids buffer.")
+            logger.info("🚀 [AI Logic] Successfully patched embedding model position_ids buffer.")
     except Exception as e:
-        print(f"⚠️ [AI Logic] Failed to patch position_ids: {e}")
+        logger.warning(f"⚠️ [AI Logic] Failed to patch position_ids: {e}")
         
-    print(f"✅ [AI Logic] Loaded Embedding Model: {settings.EMBEDDING_MODEL} (Running on: {device.upper()})")
-    print("==================================================")
+    logger.info(f"✅ [AI Logic] Loaded Embedding Model: {settings.EMBEDDING_MODEL} (Running on: {device.upper()})")
+    logger.info("==================================================")

@@ -59,7 +59,7 @@ class SessionRepository:
             title=title
         )
         db.add(session)
-        db.commit()
+        db.flush()
         db.refresh(session)
         return session
 
@@ -77,7 +77,7 @@ class SessionRepository:
             ChatSession: The updated chat session object.
         """
         session.title = new_title
-        db.commit()
+        db.flush()
         db.refresh(session)
         return session
 

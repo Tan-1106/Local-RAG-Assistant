@@ -26,3 +26,9 @@ build/
 .claude
 AGENTS.md
 CLAUDE.md
+
+# Runtime data
+backend/data/
+backend/storage/
+chat_response.txt
+test_luat.txt

@@ -1,5 +1,6 @@
 from pathlib            import Path
 from pydantic_settings  import BaseSettings, SettingsConfigDict
+from pydantic import field_validator
 
 # Resolve the absolute path to the project root directory where .env lives
 BASE_DIR = Path(__file__).resolve().parent.parent.parent  # Resolves to Legal Assistant/
@@ -16,14 +17,24 @@ class Settings(BaseSettings):
     QDRANT_COLLECTION_NAME: str
     EMBEDDING_MODEL: str
     EMBEDDING_DIMENSION: int
-    ALLOWED_ORIGINS: str = "http://localhost:3000"
+    ALLOWED_ORIGINS: str
+
+    @field_validator("JWT_SECRET_KEY", "SUPER_ADMIN_PASSWORD", mode="after")
+    @classmethod
+    def validate_secrets(cls, v: str) -> str:
+        if len(v) < 8:
+            raise ValueError("Secret keys and passwords must be at least 8 characters long")
+        return v
+
     DATA_DIR: str = "/app/data"
     DOCSTORE_PATH: str = "./storage/docstore.json"
     QDRANT_PREFER_GRPC: bool = False
     
     # Database and Authentication settings
     DATABASE_URL: str = "sqlite:////app/data/db.sqlite3"
-    JWT_SECRET_KEY: str = "e8354c41ea4d3a228f4bc42a59a7ea2b73bc2a31d926343516599ef7fa9bc8bc"
+    JWT_SECRET_KEY: str
+    SUPER_ADMIN_USERNAME: str
+    SUPER_ADMIN_PASSWORD: str
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 11520 # 8 days
 

@@ -1,50 +1,38 @@
 import os
 import shutil
+import tempfile
 from typing                     import List
-from fastapi                    import APIRouter, UploadFile, File, HTTPException, Depends
+from fastapi                    import APIRouter, UploadFile, File, HTTPException, Depends, Request, BackgroundTasks
 from fastapi.responses          import FileResponse
-from llama_index.core.chat_engine import ContextChatEngine
-from llama_index.core.storage.docstore import SimpleDocumentStore
 from app.config                 import settings
 from app.models.all_models      import User
-from app.services.auth_service  import get_current_user
-from app.services.rag_pipeline  import ingest_documents, delete_document
-from app.services.chat_engine   import get_global_chat_engine
+from app.services.auth_service  import get_current_user, get_current_admin_user
+from app.services.rag_pipeline  import (
+    delete_document,
+    ingest_documents,
+    background_ingest_uploaded_documents,
+)
 
 
 router = APIRouter(prefix="/documents", tags=["Documents & RAG"])
 
 
-def _reload_global_chat_engine_docstore(chat_engine: ContextChatEngine):
-    """
-    Helper to reload the docstore in the global chat engine to avoid stale in-memory cache.
-    """
-    try:
-        retriever = getattr(chat_engine, "_retriever", None)
-        if retriever:
-            storage_context = getattr(retriever, "_storage_context", None)
-            if storage_context:
-                if os.path.exists(settings.DOCSTORE_PATH):
-                    storage_context.docstore = SimpleDocumentStore.from_persist_path(settings.DOCSTORE_PATH)
-                    print("🚀 [AI Logic] Successfully reloaded docstore in global chat engine.")
-    except Exception as e:
-        print(f"⚠️ [AI Logic] Failed to reload docstore: {e}")
-
-
-@router.post("/ingest")
+@router.post("/ingest", status_code=202)
 def ingest_endpoint(
+    request: Request,
+    background_tasks: BackgroundTasks,
     files: List[UploadFile] = File(...),
-    chat_engine: ContextChatEngine = Depends(get_global_chat_engine)
+    current_admin: User = Depends(get_current_admin_user)
 ):
     """
-    Upload legal documents, save them to DATA_DIR, and run the ingestion pipeline.
+    Upload legal documents, stage them, and queue the ingestion pipeline in the background.
 
     Args:
         files (List[UploadFile]): A list of uploaded files to process.
         chat_engine (ContextChatEngine): The global AI chat engine dependency.
 
     Returns:
-        dict: A status dictionary containing the number of ingested files.
+        dict: A status dictionary containing the number of queued files.
     """
     if not files:
         raise HTTPException(status_code=400, detail="No files provided")
@@ -54,32 +42,48 @@ def ingest_endpoint(
         os.makedirs(settings.DATA_DIR, exist_ok=True)
         
         saved_files = []
+        staging_dir = tempfile.mkdtemp(dir=settings.DATA_DIR)
         for file in files:
-            file_path = os.path.join(settings.DATA_DIR, file.filename)
-            with open(file_path, "wb") as buffer:
+            safe_filename = os.path.basename(file.filename or "")
+            if not safe_filename:
+                raise HTTPException(status_code=400, detail="Invalid filename")
+
+            staged_path = os.path.join(staging_dir, safe_filename)
+            with open(staged_path, "wb") as buffer:
                 shutil.copyfileobj(file.file, buffer)
-            saved_files.append(file.filename)
-            
-        # Run the RAG ingestion pipeline
-        ingest_documents(data_path=settings.DATA_DIR)
+            saved_files.append(safe_filename)
+
+        background_tasks.add_task(
+            background_ingest_uploaded_documents,
+            staging_dir=staging_dir,
+            filenames=saved_files,
+            target_dir=settings.DATA_DIR,
+        )
         
-        # Reload the docstore inside global chat engine
-        _reload_global_chat_engine_docstore(chat_engine)
+        # Clear cached retriever and index
+        request.app.state.retriever = None
+        request.app.state.index = None
         
         return {
-            "status": "success",
-            "message": f"Successfully ingested {len(saved_files)} files.",
+            "status": "processing",
+            "message": f"Queued {len(saved_files)} files for background ingestion.",
             "files": saved_files
         }
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 # Manual synchronization and document deletion
-@router.post("/sync")
-def sync_endpoint(chat_engine: ContextChatEngine = Depends(get_global_chat_engine)):
+@router.post("/sync", status_code=202)
+def sync_endpoint(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    current_admin: User = Depends(get_current_admin_user)
+):
     """
-    Synchronize the vector database with all existing documents in the DATA_DIR.
+    Queue synchronization of the vector database with all existing documents in the DATA_DIR.
     This is useful for manually placed files.
 
     Returns:
@@ -97,15 +101,16 @@ def sync_endpoint(chat_engine: ContextChatEngine = Depends(get_global_chat_engin
                 "message": "No files found in the data directory to sync."
             }
             
-        # Run the RAG ingestion pipeline
-        ingest_documents(data_path=settings.DATA_DIR)
+        # Run the RAG ingestion pipeline (sync all) in background
+        background_tasks.add_task(ingest_documents, data_path=settings.DATA_DIR)
         
-        # Reload the docstore inside global chat engine
-        _reload_global_chat_engine_docstore(chat_engine)
+        # Clear cached retriever and index
+        request.app.state.retriever = None
+        request.app.state.index = None
         
         return {
-            "status": "success",
-            "message": f"Successfully synchronized {len(existing_files)} existing files."
+            "status": "processing",
+            "message": f"Queued {len(existing_files)} existing files for background synchronization."
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -115,7 +120,8 @@ def sync_endpoint(chat_engine: ContextChatEngine = Depends(get_global_chat_engin
 @router.delete("/{filename}")
 def delete_document_endpoint(
     filename: str,
-    chat_engine: ContextChatEngine = Depends(get_global_chat_engine)
+    request: Request,
+    current_admin: User = Depends(get_current_admin_user)
 ):
     """
     Delete a document and its vectors from the system.
@@ -128,12 +134,15 @@ def delete_document_endpoint(
         dict: A status dictionary detailing the deletion results.
     """
     try:
+        # Prevent Path Traversal
+        filename = os.path.basename(filename)
         result = delete_document(filename)
         if not result["deleted_from_disk"] and result["nodes_deleted_from_docstore"] == 0:
             raise HTTPException(status_code=404, detail="Document not found")
             
-        # Reload the docstore inside global chat engine
-        _reload_global_chat_engine_docstore(chat_engine)
+        # Clear cached retriever and index
+        request.app.state.retriever = None
+        request.app.state.index = None
             
         return {
             "status": "success",
@@ -161,7 +170,13 @@ def get_document_file(
     Returns:
         FileResponse: The streamed document file.
     """
+    filename = os.path.basename(filename)
     file_path = os.path.join(settings.DATA_DIR, filename)
+
+    data_dir = os.path.abspath(settings.DATA_DIR)
+    if os.path.commonpath([data_dir, os.path.abspath(file_path)]) != data_dir:
+        raise HTTPException(status_code=400, detail="Invalid file path")
+
     if not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="File not found")
     

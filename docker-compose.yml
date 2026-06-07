@@ -50,6 +50,10 @@ services:
       - EMBEDDING_DIMENSION=${EMBEDDING_DIMENSION:-768}
       - QDRANT_COLLECTION_NAME=${QDRANT_COLLECTION_NAME:-legal_documents}
       - HF_TOKEN=${HF_TOKEN}
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY}
+      - SUPER_ADMIN_USERNAME=${SUPER_ADMIN_USERNAME}
+      - SUPER_ADMIN_PASSWORD=${SUPER_ADMIN_PASSWORD}
     deploy:
       resources:
         reservations:

@@ -66,6 +66,6 @@ class MessageRepository:
             sources=sources
         )
         db.add(message)
-        db.commit()
+        db.flush()
         db.refresh(message)
         return message

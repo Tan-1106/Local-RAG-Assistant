@@ -1,9 +1,12 @@
 import os
 import sys
+import pytest
 
 # Reconfigure stdout to support printing Unicode/UTF-8 emojis on Windows terminal
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding='utf-8')
+
+pytest.importorskip("llama_index")
 
 from fastapi.testclient import TestClient
 

@@ -1,94 +1,65 @@
 import os
-from fastapi                            import Request
-from llama_index.core.retrievers        import AutoMergingRetriever
-from llama_index.core                   import VectorStoreIndex, StorageContext
-from llama_index.core.storage.docstore  import SimpleDocumentStore
-from llama_index.core.chat_engine       import ContextChatEngine
-from app.config                         import settings
-from app.db.qdrant_store                import init_qdrant_vector_store
+from fastapi import Request
+from llama_index.core.retrievers import AutoMergingRetriever
+from llama_index.core import StorageContext
+from llama_index.core.storage.docstore import SimpleDocumentStore
+from app.config import settings
+from app.logger import get_logger
 
-def create_global_chat_engine() -> ContextChatEngine:
-    """
-    Initialize the stateful chat engine once.
-    This builds the VectorStoreIndex from Qdrant, loads the Document Store,
-    and configures the AutoMergingRetriever for the RAG pipeline.
+logger = get_logger(__name__)
 
-    Returns:
-        ContextChatEngine: The initialized chat engine ready to answer queries.
+def get_retriever(request: Request) -> AutoMergingRetriever:
     """
-    print("🚀 [AI Logic] Building Global Chat Engine...")
-    # Initialize connection to Qdrant vector store
-    vector_store = init_qdrant_vector_store()
-    
-    # Build index from vector_store
-    index = VectorStoreIndex.from_vector_store(
-        vector_store=vector_store
-    )
-    
-    # Initialize base retriever to get the top 12 closest leaf nodes
-    base_retriever = index.as_retriever(similarity_top_k=12)
-    
-    # Load document store from static file saved during ingest step to access Parent Nodes
-    docstore_path = settings.DOCSTORE_PATH
-    if os.path.exists(docstore_path):
-        docstore = SimpleDocumentStore.from_persist_path(docstore_path)
-    else:
-        docstore = SimpleDocumentStore()
+    FastAPI Dependency to lazy-load and retrieve the pre-initialized retriever.
+    Re-builds if cleared from cache or AI components failed to initialize.
+    """
+    if not getattr(request.app.state, "ai_initialized", False):
+        logger.info("🚀 [AI Logic] Retrying AI system initialization...")
+        from app.services.ai_logic import initialize_ai
+        try:
+            initialize_ai()
+            request.app.state.ai_initialized = True
+        except Exception as e:
+            from fastapi import HTTPException
+            raise HTTPException(status_code=503, detail="AI Initialization failed, please check models and vector store.")
+
+    if not hasattr(request.app.state, "retriever") or request.app.state.retriever is None:
+        logger.info("🚀 [AI Logic] Building Global Retriever...")
+        from app.services.rag_pipeline import get_index
+        index = get_index()
         
-    # Pass both vector_store and docstore into Storage Context
-    storage_context = StorageContext.from_defaults(
-        vector_store=vector_store,
-        docstore=docstore
-    )
-    
-    # Use AutoMergingRetriever to merge leaf nodes into parent nodes
-    retriever = AutoMergingRetriever(
-        base_retriever, 
-        storage_context=storage_context, 
-        verbose=True
-    )
-    
-    # Create ContextChatEngine from retriever
-    chat_engine = ContextChatEngine.from_defaults(
-        retriever=retriever,
-        verbose=True
-    )
-    
-    print("✅ [AI Logic] Global Chat Engine initialized successfully.")
-    return chat_engine
+        # Dynamically check format if Qdrant was empty before
+        vector_store = index.storage_context.vector_store
+        if vector_store and not getattr(vector_store, "_collection_initialized", False):
+            client = getattr(vector_store, "_client", None)
+            collection_name = getattr(vector_store, "collection_name", None)
+            if client and collection_name:
+                try:
+                    if client.collection_exists(collection_name):
+                        vector_store._collection_initialized = True
+                        if hasattr(vector_store, "_detect_vector_format"):
+                            vector_store._detect_vector_format(collection_name)
+                            logger.info("🚀 [AI Logic] Dynamically detected Qdrant vector format on query.")
+                except Exception as e:
+                    logger.warning(f"⚠️ [AI Logic] Failed to dynamically detect vector format: {e}")
 
-def get_global_chat_engine(request: Request) -> ContextChatEngine:
-    """
-    FastAPI Dependency to retrieve the pre-initialized chat engine.
-    Also dynamically checks if Qdrant collection is created after startup
-    and runs format detection to avoid stale 'text-dense' named vector query errors.
+        base_retriever = index.as_retriever(similarity_top_k=12)
+        docstore_path = settings.DOCSTORE_PATH
+        if os.path.exists(docstore_path):
+            docstore = SimpleDocumentStore.from_persist_path(docstore_path)
+        else:
+            docstore = SimpleDocumentStore()
 
-    Args:
-        request (Request): The incoming FastAPI request containing app state.
+        storage_context = StorageContext.from_defaults(
+            vector_store=vector_store,
+            docstore=docstore
+        )
 
-    Returns:
-        ContextChatEngine: The global chat engine instance.
-    """
-    chat_engine = request.app.state.chat_engine
+        retriever = AutoMergingRetriever(
+            base_retriever,
+            storage_context=storage_context,
+            verbose=True
+        )
+        request.app.state.retriever = retriever
     
-    # Safely extract retriever and vector store to refresh format detection
-    retriever = getattr(chat_engine, "_retriever", None)
-    if retriever:
-        storage_context = getattr(retriever, "_storage_context", None)
-        if storage_context:
-            vector_store = getattr(storage_context, "vector_store", None)
-            if vector_store and not getattr(vector_store, "_collection_initialized", False):
-                client = getattr(vector_store, "_client", None)
-                collection_name = getattr(vector_store, "collection_name", None)
-                if client and collection_name:
-                    try:
-                        # If collection is now created in Qdrant, detect the vector format
-                        if client.collection_exists(collection_name):
-                            vector_store._collection_initialized = True
-                            if hasattr(vector_store, "_detect_vector_format"):
-                                vector_store._detect_vector_format(collection_name)
-                                print("🚀 [AI Logic] Dynamically detected Qdrant vector format on query.")
-                    except Exception as e:
-                        print(f"⚠️ [AI Logic] Failed to dynamically detect vector format: {e}")
-                        
-    return chat_engine
+    return request.app.state.retriever
