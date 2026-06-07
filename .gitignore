@@ -21,3 +21,8 @@ build/
 # Secrets
 .env
 *.pem
+
+.gitnexus/
+.claude
+AGENTS.md
+CLAUDE.md
