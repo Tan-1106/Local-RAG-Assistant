@@ -1,6 +1,7 @@
 import os
 from app.config                         import settings
 from app.logger                         import get_logger
+from app.db.redis_store                 import get_redis_client
 from fastapi                            import Request
 from llama_index.core.retrievers        import AutoMergingRetriever
 from llama_index.core                   import StorageContext
@@ -23,7 +24,18 @@ def get_retriever(request: Request) -> AutoMergingRetriever:
             from fastapi import HTTPException
             raise HTTPException(status_code=503, detail="AI Initialization failed, please check models and vector store.")
 
-    if not hasattr(request.app.state, "retriever") or request.app.state.retriever is None:
+    cached_version = getattr(request.app.state, "retriever_version", None)
+    try:
+        index_version = int(get_redis_client().get("rag:index-version") or 0)
+    except Exception as error:
+        logger.warning("Could not read RAG index version: %s", error)
+        index_version = cached_version
+
+    if (
+        not hasattr(request.app.state, "retriever")
+        or request.app.state.retriever is None
+        or cached_version != index_version
+    ):
         logger.info("🚀 [AI Logic] Building Global Retriever...")
         from app.services.rag_pipeline import get_index
         index = get_index()
@@ -61,5 +73,6 @@ def get_retriever(request: Request) -> AutoMergingRetriever:
             verbose=True
         )
         request.app.state.retriever = retriever
+        request.app.state.retriever_version = index_version
     
     return request.app.state.retriever

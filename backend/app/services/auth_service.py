@@ -1,19 +1,16 @@
 import jwt
 import bcrypt
 from typing                             import Optional
-from datetime                           import datetime, timedelta
+from datetime                           import datetime, timedelta, timezone
 from sqlalchemy.orm                     import Session
-from fastapi                            import Depends, HTTPException, status
-from fastapi.security                   import OAuth2PasswordBearer
+from fastapi                            import Cookie, Depends, HTTPException, status
 from app.config                         import settings
 from app.db.session                     import get_db
 from app.models.all_models              import User
 from app.schemas.auth                   import UserRegister
 from app.repositories.user_repository   import UserRepository
+from app.services.auth_session          import AuthSessionService, get_auth_session_service
 
-
-# JWT authentication configuration
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/auth/login")
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """
@@ -63,9 +60,9 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
     """
     to_encode = data.copy()
     if expires_delta:
-        expire = datetime.utcnow() + expires_delta
+        expire = datetime.now(timezone.utc) + expires_delta
     else:
-        expire = datetime.utcnow() + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+        expire = datetime.now(timezone.utc) + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     
     to_encode.update({"exp": expire})
     encoded_jwt = jwt.encode(to_encode, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
@@ -116,13 +113,17 @@ def register_user(db: Session, user_in: UserRegister) -> User:
     return UserRepository.create(db, username=user_in.username, hashed_password=hashed_password)
 
 
-def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)) -> User:
+def get_current_user(
+    token: Optional[str] = Cookie(default=None, alias=settings.AUTH_COOKIE_NAME),
+    db: Session = Depends(get_db),
+    auth_sessions: AuthSessionService = Depends(get_auth_session_service),
+) -> User:
     """
-    FastAPI dependency to extract JWT from request header, validate claims,
+    FastAPI dependency to extract JWT from the HttpOnly cookie, validate claims,
     and fetch the authenticated User object from the database.
 
     Args:
-        token (str): The extracted JWT from the Authorization header.
+        token (Optional[str]): The JWT extracted from the authentication cookie.
         db (Session): The database session.
 
     Returns:
@@ -134,16 +135,23 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
-        headers={"WWW-Authenticate": "Bearer"},
     )
+    if not token:
+        raise credentials_exception
+
     try:
         payload = jwt.decode(token, settings.JWT_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
         username: str = payload.get("sub")
-        if username is None:
+        session_id: str = payload.get("sid")
+        token_type: str = payload.get("type")
+        if username is None or session_id is None or token_type != "access":
             raise credentials_exception
     except jwt.PyJWTError:
         raise credentials_exception
-        
+
+    if not auth_sessions.exists(session_id):
+        raise credentials_exception
+
     user = UserRepository.get_by_username(db, username)
     if user is None:
         raise credentials_exception

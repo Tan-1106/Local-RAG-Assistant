@@ -185,15 +185,12 @@ class SessionService:
                         "metadata": node.metadata
                     })
             
-            # Yield sources at the end
-            yield f"data: {json.dumps({'sources': sources}, ensure_ascii=False)}\n\n"
-            yield "data: [DONE]\n\n"
-            
-            # 6. Save User and Assistant Message to DB
+            # 6. Persist the completed turn before signaling stream completion.
             answer = buffer.strip()
             MessageRepository.create(db, session_id, "user", request.question)
             sources_json = json.dumps(sources, ensure_ascii=False)
             MessageRepository.create(db, session_id, "assistant", answer, sources_json)
+            db.commit()
             
             # 7. Auto-generate title using AI if it's currently a default/new title
             if session.title == "Cuộc trò chuyện mới" or not session.title.strip():
@@ -223,10 +220,13 @@ class SessionService:
                         title_candidate = title_candidate[:37] + "..."
                     SessionRepository.update_title(db, session, title_candidate)
                 
-            # Commit all db changes for this round
-            db.commit()
+                db.commit()
+
+            yield f"data: {json.dumps({'sources': sources}, ensure_ascii=False)}\n\n"
+            yield "data: [DONE]\n\n"
             
         except Exception as e:
+            db.rollback()
             logger.error(f"Error processing chat message: {e}")
             yield f"data: {json.dumps({'error': str(e)}, ensure_ascii=False)}\n\n"
             yield "data: [DONE]\n\n"

@@ -27,4 +27,5 @@ PyJWT>=2.8.0
 
 # Task Queue & Cache
 redis>=5.0.0
-
+rq>=2.6.0,<3.0.0
+

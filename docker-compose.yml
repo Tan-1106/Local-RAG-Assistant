@@ -6,7 +6,7 @@ services:
     image: ollama/ollama:latest
     container_name: ollama
     ports:
-      - "${PORT_OLLAMA:-11434}:11434"
+      - "127.0.0.1:${PORT_OLLAMA:-11434}:11434"
     volumes:
       - ollama_storage:/root/.ollama
     deploy:
@@ -25,8 +25,8 @@ services:
     image: qdrant/qdrant:latest
     container_name: qdrant
     ports:
-      - "${PORT_QDRANT:-6333}:6333"
-      - "6334:6334"
+      - "127.0.0.1:${PORT_QDRANT:-6333}:6333"
+      - "127.0.0.1:6334:6334"
     volumes:
       - qdrant_storage:/qdrant/storage
     networks:
@@ -37,8 +37,11 @@ services:
   redis:
     image: redis:7-alpine
     container_name: redis
+    command: redis-server --appendonly yes --appendfsync everysec
     ports:
-      - "${PORT_REDIS:-6379}:6379"
+      - "127.0.0.1:${PORT_REDIS:-6379}:6379"
+    volumes:
+      - redis_storage:/data
     networks:
       - rag-network
     restart: unless-stopped
@@ -48,7 +51,69 @@ services:
     build: ./backend
     container_name: backend
     ports:
-      - "${PORT_BACKEND:-8000}:8000"
+      - "127.0.0.1:${PORT_BACKEND:-8000}:8000"
+    volumes:
+      - ./backend:/app
+      - hf_cache:/root/.cache/huggingface
+    environment:
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://ollama:11434}
+      - QDRANT_URL=${QDRANT_URL:-http://qdrant:6333}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5:7b}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-dangvantuan/vietnamese-document-embedding}
+      - EMBEDDING_DIMENSION=${EMBEDDING_DIMENSION:-768}
+      - QDRANT_COLLECTION_NAME=${QDRANT_COLLECTION_NAME:-legal_documents}
+      - HF_TOKEN=${HF_TOKEN}
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY}
+      - APP_ENV=${APP_ENV:-development}
+      - TRUST_PROXY_HEADERS=true
+      - ACCESS_TOKEN_EXPIRE_MINUTES=${ACCESS_TOKEN_EXPIRE_MINUTES:-15}
+      - REFRESH_TOKEN_EXPIRE_DAYS=${REFRESH_TOKEN_EXPIRE_DAYS:-30}
+      - AUTH_COOKIE_SECURE=${AUTH_COOKIE_SECURE:-false}
+      - AUTH_COOKIE_SAMESITE=${AUTH_COOKIE_SAMESITE:-lax}
+      - UPLOAD_MAX_FILES=${UPLOAD_MAX_FILES:-10}
+      - UPLOAD_MAX_FILE_MB=${UPLOAD_MAX_FILE_MB:-10}
+      - UPLOAD_MAX_TOTAL_MB=${UPLOAD_MAX_TOTAL_MB:-50}
+      - RATE_LIMIT_LOGIN_IP_PER_MINUTE=${RATE_LIMIT_LOGIN_IP_PER_MINUTE:-5}
+      - RATE_LIMIT_LOGIN_USERNAME_PER_15_MINUTES=${RATE_LIMIT_LOGIN_USERNAME_PER_15_MINUTES:-10}
+      - RATE_LIMIT_REGISTER_IP_PER_HOUR=${RATE_LIMIT_REGISTER_IP_PER_HOUR:-3}
+      - RATE_LIMIT_CHAT_USER_PER_MINUTE=${RATE_LIMIT_CHAT_USER_PER_MINUTE:-20}
+      - RATE_LIMIT_UPLOAD_ADMIN_PER_10_MINUTES=${RATE_LIMIT_UPLOAD_ADMIN_PER_10_MINUTES:-5}
+      - RQ_QUEUE_NAME=${RQ_QUEUE_NAME:-document-ingestion}
+      - RQ_JOB_TIMEOUT_SECONDS=${RQ_JOB_TIMEOUT_SECONDS:-3600}
+      - RQ_RESULT_TTL_SECONDS=${RQ_RESULT_TTL_SECONDS:-86400}
+      - RQ_FAILURE_TTL_SECONDS=${RQ_FAILURE_TTL_SECONDS:-604800}
+      - RAG_WRITE_LOCK_TIMEOUT_SECONDS=${RAG_WRITE_LOCK_TIMEOUT_SECONDS:-3900}
+      - RAG_WRITE_LOCK_WAIT_SECONDS=${RAG_WRITE_LOCK_WAIT_SECONDS:-60}
+      - SUPER_ADMIN_USERNAME=${SUPER_ADMIN_USERNAME}
+      - SUPER_ADMIN_PASSWORD=${SUPER_ADMIN_PASSWORD}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [ gpu ]
+    depends_on:
+      - ollama
+      - qdrant
+      - redis
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 30s
+    networks:
+      - rag-network
+    restart: unless-stopped
+
+  # 5. Durable document-ingestion worker (one process protects GPU/model memory)
+  rq-worker:
+    build: ./backend
+    container_name: rq-worker
+    command: python -m app.rq_worker
     volumes:
       - ./backend:/app
       - hf_cache:/root/.cache/huggingface
@@ -65,6 +130,21 @@ services:
       - SUPER_ADMIN_USERNAME=${SUPER_ADMIN_USERNAME}
       - SUPER_ADMIN_PASSWORD=${SUPER_ADMIN_PASSWORD}
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+      - RQ_QUEUE_NAME=${RQ_QUEUE_NAME:-document-ingestion}
+      - RQ_JOB_TIMEOUT_SECONDS=${RQ_JOB_TIMEOUT_SECONDS:-3600}
+      - RQ_RESULT_TTL_SECONDS=${RQ_RESULT_TTL_SECONDS:-86400}
+      - RQ_FAILURE_TTL_SECONDS=${RQ_FAILURE_TTL_SECONDS:-604800}
+      - RAG_WRITE_LOCK_TIMEOUT_SECONDS=${RAG_WRITE_LOCK_TIMEOUT_SECONDS:-3900}
+      - RAG_WRITE_LOCK_WAIT_SECONDS=${RAG_WRITE_LOCK_WAIT_SECONDS:-60}
+    depends_on:
+      backend:
+        condition: service_healthy
+      ollama:
+        condition: service_started
+      qdrant:
+        condition: service_started
+      redis:
+        condition: service_started
     deploy:
       resources:
         reservations:
@@ -72,27 +152,19 @@ services:
             - driver: nvidia
               count: 1
               capabilities: [ gpu ]
-    depends_on:
-      - ollama
-      - qdrant
-      - redis
     networks:
       - rag-network
     restart: unless-stopped
 
-  # 5. Frontend Service (ReactJS / Vite)
+  # 6. Frontend Service (ReactJS / Vite)
   frontend:
     build: ./frontend
     container_name: frontend
     ports:
-      - "${PORT_FRONTEND:-3000}:3000"
-    volumes:
-      - ./frontend:/app
-      - /app/node_modules
-    environment:
-      - VITE_API_URL=${VITE_API_URL:-http://localhost:8000}
+      - "${PORT_FRONTEND:-3000}:80"
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     networks:
       - rag-network
     restart: unless-stopped
@@ -104,4 +176,5 @@ networks:
 volumes:
   ollama_storage:
   qdrant_storage:
+  redis_storage:
   hf_cache:

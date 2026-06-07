@@ -10,6 +10,8 @@ from app.schemas.chat               import ChatRequest
 from app.services.auth_service      import get_current_user
 from app.services.session_service   import SessionService
 from app.services.chat_engine       import get_retriever
+from app.services.rate_limit        import RateLimit, RateLimiter, get_rate_limiter
+from app.config                     import settings
 
 
 router = APIRouter(prefix="/sessions", tags=["Chat Sessions"])
@@ -121,7 +123,8 @@ def session_chat_endpoint(
     request: ChatRequest,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
-    retriever: AutoMergingRetriever = Depends(get_retriever)
+    retriever: AutoMergingRetriever = Depends(get_retriever),
+    rate_limiter: RateLimiter = Depends(get_rate_limiter),
 ):
     """
     Process a chat message within a session.
@@ -139,6 +142,12 @@ def session_chat_endpoint(
     Returns:
         StreamingResponse: An SSE text/event-stream.
     """
+    rate_limiter.enforce(
+        "chat:user",
+        str(current_user.id),
+        RateLimit(settings.RATE_LIMIT_CHAT_USER_PER_MINUTE, 60),
+    )
+
     return StreamingResponse(
         SessionService.process_chat_message(
             db=db,

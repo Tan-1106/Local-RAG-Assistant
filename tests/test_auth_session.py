@@ -11,6 +11,14 @@ load_dotenv()
 
 BASE_URL = "http://localhost:8000/api"
 TIMEOUT = 300  # Prevent indefinite hanging by setting a 5-minute timeout
+CSRF_COOKIE_NAME = os.environ.get("AUTH_CSRF_COOKIE_NAME", "legal_assistant_csrf")
+
+
+def csrf_headers(client: requests.Session) -> dict[str, str]:
+    csrf_token = client.cookies.get(CSRF_COOKIE_NAME)
+    if not csrf_token:
+        raise RuntimeError("No CSRF cookie received")
+    return {"X-CSRF-Token": csrf_token}
 
 def main():
     print("==================================================")
@@ -21,13 +29,15 @@ def main():
     unique_suffix = str(uuid.uuid4())[:8]
     username = f"testuser_{unique_suffix}"
     password = "testpassword123"
+    user_client = requests.Session()
+    admin_client = requests.Session()
 
     # 1. Register a new user
     print(f"\n[1] Testing /auth/register for user: {username}...")
     url_register = f"{BASE_URL}/auth/register"
     payload_register = {"username": username, "password": password}
     try:
-        response = requests.post(url_register, json=payload_register, timeout=TIMEOUT)
+        response = user_client.post(url_register, json=payload_register, timeout=TIMEOUT)
         print("Status Code:", response.status_code)
         assert response.status_code == 201, "Registration failed!"
         print("Response:", response.json())
@@ -35,24 +45,20 @@ def main():
         print("Error during registration:", e)
         exit(1)
 
-    # 2. Login to retrieve JWT token
-    print("\n[2] Testing /auth/login to fetch JWT access token...")
+    # 2. Login to create an HttpOnly cookie-backed session
+    print("\n[2] Testing /auth/login cookie session...")
     url_login = f"{BASE_URL}/auth/login"
     form_data = {"username": username, "password": password}
     try:
-        response = requests.post(url_login, data=form_data, timeout=TIMEOUT)
+        response = user_client.post(url_login, data=form_data, timeout=TIMEOUT)
         print("Status Code:", response.status_code)
         assert response.status_code == 200, "Login failed!"
-        token_data = response.json()
-        access_token = token_data.get("access_token")
-        assert access_token, "No access token received!"
-        print("JWT Token acquired successfully.")
+        assert "access_token" not in response.json(), "JWT must not be exposed in JSON"
+        assert user_client.cookies.get(CSRF_COOKIE_NAME), "No CSRF cookie received"
+        print("Cookie-backed session acquired successfully.")
     except Exception as e:
         print("Error during login:", e)
         exit(1)
-
-    # Configure authenticated headers
-    auth_headers = {"Authorization": f"Bearer {access_token}"}
 
     admin_username = os.environ.get("SUPER_ADMIN_USERNAME")
     admin_password = os.environ.get("SUPER_ADMIN_PASSWORD")
@@ -61,21 +67,19 @@ def main():
             "SUPER_ADMIN_USERNAME and SUPER_ADMIN_PASSWORD are required for this E2E test"
         )
 
-    admin_response = requests.post(
+    admin_response = admin_client.post(
         url_login,
         data={"username": admin_username, "password": admin_password},
         timeout=TIMEOUT,
     )
     assert admin_response.status_code == 200, "Admin login failed!"
-    admin_headers = {
-        "Authorization": f"Bearer {admin_response.json()['access_token']}"
-    }
+    assert "access_token" not in admin_response.json()
 
     # 3. Access secure /auth/me route
-    print("\n[3] Testing /auth/me with JWT bearer token...")
+    print("\n[3] Testing /auth/me with HttpOnly cookie...")
     url_me = f"{BASE_URL}/auth/me"
     try:
-        response = requests.get(url_me, headers=auth_headers, timeout=TIMEOUT)
+        response = user_client.get(url_me, timeout=TIMEOUT)
         print("Status Code:", response.status_code)
         assert response.status_code == 200, "Auth /me failed!"
         print("Profile Details:", response.json())
@@ -87,7 +91,12 @@ def main():
     print("\n[4] Testing session creation POST /sessions...")
     url_session = f"{BASE_URL}/sessions/"
     try:
-        response = requests.post(url_session, json={"title": "Cuộc trò chuyện mới"}, headers=auth_headers, timeout=TIMEOUT)
+        response = user_client.post(
+            url_session,
+            json={"title": "Cuộc trò chuyện mới"},
+            headers=csrf_headers(user_client),
+            timeout=TIMEOUT,
+        )
         print("Status Code:", response.status_code)
         assert response.status_code == 201, "Session creation failed!"
         session_data = response.json()
@@ -109,15 +118,15 @@ def main():
     try:
         with open("test_luat.txt", "rb") as f:
             files = {"files": f}
-            response = requests.post(
+            response = admin_client.post(
                 url_ingest,
                 files=files,
-                headers=admin_headers,
+                headers=csrf_headers(admin_client),
                 timeout=TIMEOUT,
             )
             duration = time.time() - start_time
             print(f"Ingest Status Code: {response.status_code} (Took {duration:.2f} seconds)")
-            assert response.status_code == 200, "Ingestion failed!"
+            assert response.status_code == 202, "Ingestion failed!"
             print("Ingest Response:", response.json())
     except Exception as e:
         print("Error during ingestion:", e)
@@ -135,7 +144,12 @@ def main():
     start_time = time.time()
     payload_chat_1 = {"question": "tội giết người bị phạt tù như thế nào?"}
     try:
-        response = requests.post(url_chat, json=payload_chat_1, headers=auth_headers, timeout=TIMEOUT)
+        response = user_client.post(
+            url_chat,
+            json=payload_chat_1,
+            headers=csrf_headers(user_client),
+            timeout=TIMEOUT,
+        )
         duration = time.time() - start_time
         print(f"Status Code: {response.status_code} (Took {duration:.2f} seconds)")
         if response.status_code != 200:
@@ -154,7 +168,12 @@ def main():
     start_time = time.time()
     payload_chat_2 = {"question": "tử hình có áp dụng cho tội đó không?"}
     try:
-        response = requests.post(url_chat, json=payload_chat_2, headers=auth_headers, timeout=TIMEOUT)
+        response = user_client.post(
+            url_chat,
+            json=payload_chat_2,
+            headers=csrf_headers(user_client),
+            timeout=TIMEOUT,
+        )
         duration = time.time() - start_time
         print(f"Status Code: {response.status_code} (Took {duration:.2f} seconds)")
         assert response.status_code == 200, "Chat Turn 2 failed!"
@@ -168,7 +187,7 @@ def main():
     # 7. Check list sessions (to verify if the title was auto-updated)
     print("\n[7] Testing GET /sessions to check auto-updated session title...")
     try:
-        response = requests.get(url_session, headers=auth_headers, timeout=TIMEOUT)
+        response = user_client.get(url_session, timeout=TIMEOUT)
         print("Status Code:", response.status_code)
         assert response.status_code == 200, "Listing sessions failed!"
         sessions_list = response.json()
@@ -183,7 +202,7 @@ def main():
     print("\n[8] Testing GET /sessions/{session_id}/messages to verify conversation history persistence...")
     url_messages = f"{BASE_URL}/sessions/{session_id}/messages"
     try:
-        response = requests.get(url_messages, headers=auth_headers, timeout=TIMEOUT)
+        response = user_client.get(url_messages, timeout=TIMEOUT)
         print("Status Code:", response.status_code)
         assert response.status_code == 200, "Fetching messages failed!"
         msg_history = response.json()
@@ -203,7 +222,11 @@ def main():
     print(f"Deleting chat session: {session_id}...")
     url_delete_session = f"{BASE_URL}/sessions/{session_id}"
     try:
-        response = requests.delete(url_delete_session, headers=auth_headers, timeout=TIMEOUT)
+        response = user_client.delete(
+            url_delete_session,
+            headers=csrf_headers(user_client),
+            timeout=TIMEOUT,
+        )
         print("Status Code:", response.status_code)
         assert response.status_code == 200, "Deleting session failed!"
     except Exception as e:
@@ -213,9 +236,9 @@ def main():
     print("Deleting ingested legal document test_luat.txt from index...")
     url_delete_doc = f"{BASE_URL}/documents/test_luat.txt"
     try:
-        response = requests.delete(
+        response = admin_client.delete(
             url_delete_doc,
-            headers=admin_headers,
+            headers=csrf_headers(admin_client),
             timeout=TIMEOUT,
         )
         print("Status Code:", response.status_code)
@@ -230,7 +253,7 @@ def main():
 
     print("\n==================================================")
     print("🎉 E2E INTEGRATION TEST COMPLETED SUCCESSFULLY!")
-    print("All features verified: Register, Login, Token, CRUD Session, RAG memory.")
+    print("All features verified: Register, Cookie Login, CSRF, CRUD Session, RAG memory.")
     print("==================================================")
 
 if __name__ == "__main__":

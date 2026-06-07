@@ -6,7 +6,8 @@ if hasattr(sys.stdout, "reconfigure"):
     except Exception:
         pass
 
-from fastapi                    import FastAPI
+from fastapi                    import FastAPI, Request
+from fastapi.responses          import JSONResponse
 from fastapi.middleware.cors    import CORSMiddleware
 from contextlib                 import asynccontextmanager
 from app.services.ai_logic      import initialize_ai
@@ -15,7 +16,8 @@ from app.api.router             import api_router
 from app.db.session             import engine, Base, SessionLocal
 from sqlalchemy                 import text, inspect
 from app.models.all_models      import User
-from app.services.auth_service  import get_password_hash
+from app.services.admin_bootstrap import ensure_super_admin
+from app.services.request_security import is_csrf_token_valid, is_origin_allowed
 from app.logger                 import get_logger
 
 logger = get_logger(__name__)
@@ -33,6 +35,11 @@ async def lifespan(app: FastAPI):
     Yields:
         None
     """
+    # Ensure SQLite directory exists
+    import os
+    if settings.DATABASE_URL.startswith("sqlite"):
+        os.makedirs(settings.DATA_DIR, exist_ok=True)
+
     # Create DB tables on startup
     Base.metadata.create_all(bind=engine)
 
@@ -48,23 +55,18 @@ async def lifespan(app: FastAPI):
     # Initialize Super Admin user
     db = SessionLocal()
     try:
-        admin_user = db.query(User).filter(User.username == settings.SUPER_ADMIN_USERNAME).first()
-        if not admin_user:
-            admin_user = User(
-                username=settings.SUPER_ADMIN_USERNAME,
-                hashed_password=get_password_hash(settings.SUPER_ADMIN_PASSWORD),
-                role="admin"
-            )
-            db.add(admin_user)
-            db.commit()
-        elif admin_user.role != "admin":
-            admin_user.role = "admin"
-            db.commit()
+        ensure_super_admin(
+            db,
+            settings.SUPER_ADMIN_USERNAME,
+            settings.SUPER_ADMIN_PASSWORD,
+        )
     finally:
         db.close()
     
     # Startup AI logic (lazy/non-blocking)
     app.state.index = None
+    app.state.retriever = None
+    app.state.retriever_version = None
     app.state.ai_initialized = False
     try:
         initialize_ai()
@@ -83,6 +85,7 @@ app = FastAPI(title="Legal Assistant API", lifespan=lifespan)
 
 # Add CORS middleware
 allowed_origins_list = [origin.strip() for origin in settings.ALLOWED_ORIGINS.split(",") if origin.strip()]
+allowed_origins = set(allowed_origins_list)
 
 app.add_middleware(
     CORSMiddleware,
@@ -90,7 +93,35 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["X-CSRF-Token"],
 )
+
+
+@app.middleware("http")
+async def enforce_browser_request_security(request: Request, call_next):
+    """Validate browser origins and double-submit CSRF tokens for cookie auth."""
+    if request.url.path.startswith("/api") and request.method not in {"GET", "HEAD", "OPTIONS"}:
+        origin = request.headers.get("origin")
+        if not is_origin_allowed(origin, allowed_origins):
+            return JSONResponse(status_code=403, content={"detail": "Origin not allowed"})
+
+        has_auth_cookie = bool(
+            request.cookies.get(settings.AUTH_COOKIE_NAME)
+            or request.cookies.get(settings.AUTH_REFRESH_COOKIE_NAME)
+        )
+        is_auth_bootstrap = request.url.path in {
+            "/api/auth/login",
+            "/api/auth/register",
+            "/api/auth/refresh",
+        }
+        if has_auth_cookie and not is_auth_bootstrap:
+            csrf_cookie = request.cookies.get(settings.AUTH_CSRF_COOKIE_NAME)
+            csrf_header = request.headers.get("X-CSRF-Token")
+            if not is_csrf_token_valid(csrf_cookie, csrf_header):
+                return JSONResponse(status_code=403, content={"detail": "CSRF validation failed"})
+
+    return await call_next(request)
+
 
 # Include API endpoints
 app.include_router(api_router, prefix="/api")

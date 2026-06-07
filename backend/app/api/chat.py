@@ -7,6 +7,8 @@ from app.services.chat_engine       import get_retriever
 from app.schemas.chat               import ChatRequest
 from app.models.all_models          import User
 from app.services.auth_service      import get_current_user
+from app.services.rate_limit        import RateLimit, RateLimiter, get_rate_limiter
+from app.config                     import settings
 
 
 router = APIRouter(prefix="/chat", tags=["Generic Chat (No Session)"])
@@ -15,12 +17,19 @@ router = APIRouter(prefix="/chat", tags=["Generic Chat (No Session)"])
 def chat_endpoint(
     request: ChatRequest,
     retriever: AutoMergingRetriever = Depends(get_retriever),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
+    rate_limiter: RateLimiter = Depends(get_rate_limiter),
 ):
     """
     Process a legal question using the RAG pipeline and stream the answer with sources via SSE.
     This endpoint does not save conversation history.
     """
+    rate_limiter.enforce(
+        "chat:user",
+        str(current_user.id),
+        RateLimit(settings.RATE_LIMIT_CHAT_USER_PER_MINUTE, 60),
+    )
+
     def generate_stream():
         try:
             chat_engine = ContextChatEngine.from_defaults(retriever=retriever, verbose=True)

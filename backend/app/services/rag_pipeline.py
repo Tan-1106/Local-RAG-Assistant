@@ -169,8 +169,7 @@ def _ingest_documents(data_path: str = None, specific_files: list[str] = None):
         chunk_sizes=[1024, 512, 128]
     )
     extractors = [
-        TitleExtractor(nodes=5),
-        KeywordExtractor(keywords=5)
+        TitleExtractor(nodes=5)
     ]
     
     # Run the Ingestion Pipeline

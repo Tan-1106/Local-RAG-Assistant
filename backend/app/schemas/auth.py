@@ -24,18 +24,6 @@ class UserLogin(BaseModel):
     password: str
 
 
-class Token(BaseModel):
-    """
-    Schema for the access token response.
-    
-    Attributes:
-        access_token (str): The access token for the user.
-        token_type (str): The type of the token (default is "bearer").
-    """
-    access_token: str
-    token_type: str = "bearer"
-
-
 class UserResponse(BaseModel):
     """
     Schema for user response data.
