@@ -1,0 +1,107 @@
+name: legal-assistant
+
+services:
+  # 1. Local AI Model Engine (Ollama)
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    ports:
+      - "${PORT_OLLAMA:-11434}:11434"
+    volumes:
+      - ollama_storage:/root/.ollama
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [ gpu ]
+    networks:
+      - rag-network
+    restart: unless-stopped
+
+  # 2. Vector Database (Qdrant)
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: qdrant
+    ports:
+      - "${PORT_QDRANT:-6333}:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_storage:/qdrant/storage
+    networks:
+      - rag-network
+    restart: unless-stopped
+
+  # 3. Redis (Task Queue / Cache)
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    ports:
+      - "${PORT_REDIS:-6379}:6379"
+    networks:
+      - rag-network
+    restart: unless-stopped
+
+  # 4. Backend Service (FastAPI + LlamaIndex)
+  backend:
+    build: ./backend
+    container_name: backend
+    ports:
+      - "${PORT_BACKEND:-8000}:8000"
+    volumes:
+      - ./backend:/app
+      - hf_cache:/root/.cache/huggingface
+    environment:
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://ollama:11434}
+      - QDRANT_URL=${QDRANT_URL:-http://qdrant:6333}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5:7b}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-dangvantuan/vietnamese-document-embedding}
+      - EMBEDDING_DIMENSION=${EMBEDDING_DIMENSION:-768}
+      - QDRANT_COLLECTION_NAME=${QDRANT_COLLECTION_NAME:-legal_documents}
+      - HF_TOKEN=${HF_TOKEN}
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY}
+      - SUPER_ADMIN_USERNAME=${SUPER_ADMIN_USERNAME}
+      - SUPER_ADMIN_PASSWORD=${SUPER_ADMIN_PASSWORD}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [ gpu ]
+    depends_on:
+      - ollama
+      - qdrant
+      - redis
+    networks:
+      - rag-network
+    restart: unless-stopped
+
+  # 5. Frontend Service (ReactJS / Vite)
+  frontend:
+    build: ./frontend
+    container_name: frontend
+    ports:
+      - "${PORT_FRONTEND:-3000}:3000"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    environment:
+      - VITE_API_URL=${VITE_API_URL:-http://localhost:8000}
+    depends_on:
+      - backend
+    networks:
+      - rag-network
+    restart: unless-stopped
+
+networks:
+  rag-network:
+    driver: bridge
+
+volumes:
+  ollama_storage:
+  qdrant_storage:
+  hf_cache:

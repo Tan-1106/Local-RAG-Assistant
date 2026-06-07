@@ -1,0 +1,7 @@
+{
+  "name": "legal-assistant-frontend",
+  "version": "1.0.0",
+  "scripts": {
+    "dev": "echo 'Mock frontend dev running...' && tail -f /dev/null #"
+  }
+}

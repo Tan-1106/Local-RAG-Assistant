@@ -1,0 +1,30 @@
+fastapi>=0.115.0
+uvicorn>=0.30.0
+python-dotenv>=1.0.1
+pydantic-settings>=2.4.0
+python-multipart>=0.0.9
+
+# LlamaIndex Core & Integrations
+llama-index-core>=0.14.0
+llama-index-llms-ollama>=0.1.2
+llama-index-embeddings-huggingface>=0.5.0
+llama-index-vector-stores-qdrant>=0.2.0
+
+# Vector DB & AI Models
+qdrant-client>=1.18.0
+sentence-transformers>=5.5.0
+accelerate>=0.34.0
+
+# PDF Processing
+pypdf>=5.0.0
+
+# Relational Database
+SQLAlchemy>=2.0.0
+
+# Authentication
+bcrypt>=4.0.0
+PyJWT>=2.8.0
+
+# Task Queue & Cache
+redis>=5.0.0
+
