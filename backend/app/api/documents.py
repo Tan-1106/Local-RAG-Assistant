@@ -12,6 +12,7 @@ from app.services.rag_pipeline  import (
     ingest_documents,
     background_ingest_uploaded_documents,
 )
+from app.services.task_service  import TaskTrackerService, get_task_service
 
 
 router = APIRouter(prefix="/documents", tags=["Documents & RAG"])
@@ -22,7 +23,8 @@ def ingest_endpoint(
     request: Request,
     background_tasks: BackgroundTasks,
     files: List[UploadFile] = File(...),
-    current_admin: User = Depends(get_current_admin_user)
+    current_admin: User = Depends(get_current_admin_user),
+    task_service: TaskTrackerService = Depends(get_task_service)
 ):
     """
     Upload legal documents, stage them, and queue the ingestion pipeline in the background.
@@ -53,11 +55,14 @@ def ingest_endpoint(
                 shutil.copyfileobj(file.file, buffer)
             saved_files.append(safe_filename)
 
+        task_id = task_service.create_task("ingest", meta={"files": saved_files})
+
         background_tasks.add_task(
             background_ingest_uploaded_documents,
             staging_dir=staging_dir,
             filenames=saved_files,
             target_dir=settings.DATA_DIR,
+            task_id=task_id
         )
         
         # Clear cached retriever and index
@@ -66,6 +71,7 @@ def ingest_endpoint(
         
         return {
             "status": "processing",
+            "task_id": task_id,
             "message": f"Queued {len(saved_files)} files for background ingestion.",
             "files": saved_files
         }
@@ -80,7 +86,8 @@ def ingest_endpoint(
 def sync_endpoint(
     request: Request,
     background_tasks: BackgroundTasks,
-    current_admin: User = Depends(get_current_admin_user)
+    current_admin: User = Depends(get_current_admin_user),
+    task_service: TaskTrackerService = Depends(get_task_service)
 ):
     """
     Queue synchronization of the vector database with all existing documents in the DATA_DIR.
@@ -102,7 +109,8 @@ def sync_endpoint(
             }
             
         # Run the RAG ingestion pipeline (sync all) in background
-        background_tasks.add_task(ingest_documents, data_path=settings.DATA_DIR)
+        task_id = task_service.create_task("sync", meta={"count": len(existing_files)})
+        background_tasks.add_task(ingest_documents, data_path=settings.DATA_DIR, task_id=task_id)
         
         # Clear cached retriever and index
         request.app.state.retriever = None
@@ -110,10 +118,28 @@ def sync_endpoint(
         
         return {
             "status": "processing",
+            "task_id": task_id,
             "message": f"Queued {len(existing_files)} existing files for background synchronization."
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# Polling endpoint for tasks
+@router.get("/tasks/{task_id}")
+def get_task_status(
+    task_id: str,
+    task_service: TaskTrackerService = Depends(get_task_service),
+    current_admin: User = Depends(get_current_admin_user)
+):
+    """
+    Check the status of a background task.
+    """
+    task = task_service.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found or expired")
+    
+    return task
 
 
 # Document deletion

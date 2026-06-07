@@ -10,6 +10,7 @@ from llama_index.core.ingestion         import IngestionPipeline
 from app.config                         import settings
 from app.db.qdrant_store                import init_qdrant_vector_store
 from app.logger                         import get_logger
+from app.services.task_service          import TaskTrackerService
 
 logger = get_logger(__name__)
 
@@ -91,9 +92,18 @@ def _delete_indexed_document(filename: str, preserve_ingestion_id: str | None = 
     return len(docs_to_delete)
 
 
-def ingest_documents(data_path: str = None, specific_files: list[str] = None):
-    with _index_lock:
-        return _ingest_documents(data_path, specific_files)
+def ingest_documents(data_path: str = None, specific_files: list[str] = None, task_id: str = None):
+    try:
+        with _index_lock:
+            result = _ingest_documents(data_path, specific_files)
+        if task_id:
+            TaskTrackerService().update_task_status(task_id, "completed")
+        return result
+    except Exception as e:
+        logger.error(f"Sync ingestion failed: {e}")
+        if task_id:
+            TaskTrackerService().update_task_status(task_id, "failed", error=str(e))
+        raise
 
 
 def ingest_uploaded_documents(
@@ -111,13 +121,17 @@ def ingest_uploaded_documents(
             )
         return index
 
-def background_ingest_uploaded_documents(staging_dir: str, filenames: list[str], target_dir: str):
+def background_ingest_uploaded_documents(staging_dir: str, filenames: list[str], target_dir: str, task_id: str = None):
     import shutil
     try:
         ingest_uploaded_documents(staging_dir, filenames, target_dir)
         logger.info(f"Background ingestion of {len(filenames)} files completed successfully.")
+        if task_id:
+            TaskTrackerService().update_task_status(task_id, "completed")
     except Exception as e:
         logger.error(f"Background ingestion failed: {e}")
+        if task_id:
+            TaskTrackerService().update_task_status(task_id, "failed", error=str(e))
     finally:
         shutil.rmtree(staging_dir, ignore_errors=True)
 

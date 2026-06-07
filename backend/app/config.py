@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     EMBEDDING_MODEL: str
     EMBEDDING_DIMENSION: int
     ALLOWED_ORIGINS: str
+    REDIS_URL: str = "redis://localhost:6379/0"
 
     @field_validator("JWT_SECRET_KEY", "SUPER_ADMIN_PASSWORD", mode="after")
     @classmethod

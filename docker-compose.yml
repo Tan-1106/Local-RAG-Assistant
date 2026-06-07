@@ -33,7 +33,17 @@ services:
       - rag-network
     restart: unless-stopped
 
-  # 3. Backend Service (FastAPI + LlamaIndex)
+  # 3. Redis (Task Queue / Cache)
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    ports:
+      - "${PORT_REDIS:-6379}:6379"
+    networks:
+      - rag-network
+    restart: unless-stopped
+
+  # 4. Backend Service (FastAPI + LlamaIndex)
   backend:
     build: ./backend
     container_name: backend
@@ -54,6 +64,7 @@ services:
       - JWT_SECRET_KEY=${JWT_SECRET_KEY}
       - SUPER_ADMIN_USERNAME=${SUPER_ADMIN_USERNAME}
       - SUPER_ADMIN_PASSWORD=${SUPER_ADMIN_PASSWORD}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
     deploy:
       resources:
         reservations:
@@ -64,11 +75,12 @@ services:
     depends_on:
       - ollama
       - qdrant
+      - redis
     networks:
       - rag-network
     restart: unless-stopped
 
-  # 4. Frontend Service (ReactJS / Vite)
+  # 5. Frontend Service (ReactJS / Vite)
   frontend:
     build: ./frontend
     container_name: frontend
