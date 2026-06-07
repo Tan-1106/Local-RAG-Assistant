@@ -11,9 +11,9 @@ from app.models.all_models              import User
 from app.schemas.auth                   import UserRegister
 from app.repositories.user_repository   import UserRepository
 
+
 # JWT authentication configuration
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/auth/login")
-
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """

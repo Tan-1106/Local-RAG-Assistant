@@ -2,10 +2,11 @@ from typing                         import List
 from sqlalchemy.orm                 import Session
 from llama_index.core.retrievers    import AutoMergingRetriever
 from fastapi                        import APIRouter, Depends, status
+from fastapi.responses              import StreamingResponse
 from app.db.session                 import get_db
 from app.models.all_models          import User
 from app.schemas.session            import SessionCreate, SessionResponse, MessageResponse, SessionUpdate
-from app.schemas.chat               import ChatRequest, ChatResponse
+from app.schemas.chat               import ChatRequest
 from app.services.auth_service      import get_current_user
 from app.services.session_service   import SessionService
 from app.services.chat_engine       import get_retriever
@@ -114,7 +115,7 @@ def rename_session(
     return SessionService.rename_session(db, session_id, current_user.id, session_update.title)
 
 
-@router.post("/{session_id}/chat", response_model=ChatResponse)
+@router.post("/{session_id}/chat")
 def session_chat_endpoint(
     session_id: str,
     request: ChatRequest,
@@ -125,7 +126,8 @@ def session_chat_endpoint(
     """
     Process a chat message within a session.
     Loads past conversation history, queries stateful ContextChatEngine,
-    saves conversation logs to DB, and auto-updates the session title if needed.
+    and returns a Server-Sent Events (SSE) stream.
+    Saves conversation logs to DB after the stream ends.
 
     Args:
         session_id (str): The ID of the session.
@@ -135,12 +137,15 @@ def session_chat_endpoint(
         retriever (AutoMergingRetriever, optional): The global AI stateless retriever dependency.
 
     Returns:
-        ChatResponse: The AI-generated answer and related sources.
+        StreamingResponse: An SSE text/event-stream.
     """
-    return SessionService.process_chat_message(
-        db=db,
-        session_id=session_id,
-        user_id=current_user.id,
-        request=request,
-        retriever=retriever
+    return StreamingResponse(
+        SessionService.process_chat_message(
+            db=db,
+            session_id=session_id,
+            user_id=current_user.id,
+            request=request,
+            retriever=retriever
+        ),
+        media_type="text/event-stream"
     )

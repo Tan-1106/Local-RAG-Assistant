@@ -1,6 +1,6 @@
 from pathlib            import Path
+from pydantic           import field_validator
 from pydantic_settings  import BaseSettings, SettingsConfigDict
-from pydantic import field_validator
 
 # Resolve the absolute path to the project root directory where .env lives
 BASE_DIR = Path(__file__).resolve().parent.parent.parent  # Resolves to Legal Assistant/

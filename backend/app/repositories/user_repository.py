@@ -1,7 +1,7 @@
 from typing                         import Optional
 from sqlalchemy.orm                 import Session
 from app.models.all_models          import User
-from app.schemas.auth               import UserRegister
+
 
 class UserRepository:
     """

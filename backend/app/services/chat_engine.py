@@ -1,10 +1,10 @@
 import os
-from fastapi import Request
-from llama_index.core.retrievers import AutoMergingRetriever
-from llama_index.core import StorageContext
-from llama_index.core.storage.docstore import SimpleDocumentStore
-from app.config import settings
-from app.logger import get_logger
+from app.config                         import settings
+from app.logger                         import get_logger
+from fastapi                            import Request
+from llama_index.core.retrievers        import AutoMergingRetriever
+from llama_index.core                   import StorageContext
+from llama_index.core.storage.docstore  import SimpleDocumentStore
 
 logger = get_logger(__name__)
 
