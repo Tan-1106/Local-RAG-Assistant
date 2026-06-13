@@ -70,6 +70,7 @@ def get_retriever(request: Request) -> AutoMergingRetriever:
         retriever = AutoMergingRetriever(
             base_retriever,
             storage_context=storage_context,
+            simple_ratio_thresh=0.4,
             verbose=True
         )
         request.app.state.retriever = retriever

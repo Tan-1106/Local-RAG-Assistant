@@ -64,6 +64,20 @@ class SessionRepository:
         return session
 
     @staticmethod
+    def delete_all(db: Session):
+        """
+        Deletes all chat sessions and their associated messages from the database.
+
+        Args:
+            db (Session): The database session.
+        """
+        # Delete messages first (if cascade is not strictly enforced by SQLite pragmas)
+        from app.models.all_models import ChatMessage
+        db.query(ChatMessage).delete()
+        db.query(ChatSession).delete()
+        db.commit()
+
+    @staticmethod
     def update_title(db: Session, session: ChatSession, new_title: str) -> ChatSession:
         """
         Updates the title of an existing chat session.

@@ -1,13 +1,14 @@
 from typing                         import List
 from sqlalchemy.orm                 import Session
 from llama_index.core.retrievers    import AutoMergingRetriever
-from fastapi                        import APIRouter, Depends, status
+from fastapi                        import APIRouter, Depends, HTTPException, status
 from fastapi.responses              import StreamingResponse
+from pydantic                       import BaseModel
 from app.db.session                 import get_db
 from app.models.all_models          import User
 from app.schemas.session            import SessionCreate, SessionResponse, MessageResponse, SessionUpdate
 from app.schemas.chat               import ChatRequest
-from app.services.auth_service      import get_current_user
+from app.services.auth_service      import get_current_user, get_current_admin_user
 from app.services.session_service   import SessionService
 from app.services.chat_engine       import get_retriever
 from app.services.rate_limit        import RateLimit, RateLimiter, get_rate_limiter
@@ -15,6 +16,10 @@ from app.config                     import settings
 
 
 router = APIRouter(prefix="/sessions", tags=["Chat Sessions"])
+
+
+class PasswordVerify(BaseModel):
+    password: str
 
 
 @router.post("/", response_model=SessionResponse, status_code=status.HTTP_201_CREATED)
@@ -75,6 +80,28 @@ def get_session_messages(
     return SessionService.get_session_messages(db, session_id, current_user.id)
 
 
+@router.delete("/all", status_code=status.HTTP_200_OK)
+def delete_all_sessions(
+    payload: PasswordVerify,
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(get_current_admin_user)
+):
+    """
+    Deletes all chat sessions. Only accessible by admins.
+    Requires password verification.
+    """
+    from app.services.auth_service import verify_password
+
+    if not verify_password(payload.password, admin_user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect password"
+        )
+
+    SessionService.delete_all_sessions(db)
+    return {"detail": "All sessions deleted successfully."}
+
+
 @router.delete("/{session_id}", status_code=status.HTTP_200_OK)
 def delete_session(
     session_id: str,
@@ -118,7 +145,7 @@ def rename_session(
 
 
 @router.post("/{session_id}/chat")
-def session_chat_endpoint(
+async def session_chat_endpoint(
     session_id: str,
     request: ChatRequest,
     db: Session = Depends(get_db),
@@ -156,5 +183,10 @@ def session_chat_endpoint(
             request=request,
             retriever=retriever
         ),
-        media_type="text/event-stream"
+        media_type="text/event-stream",
+        headers={
+            "X-Accel-Buffering": "no",
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+        }
     )

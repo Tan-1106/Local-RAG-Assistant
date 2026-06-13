@@ -1,17 +1,17 @@
 import secrets
-from typing                     import Optional
-from sqlalchemy.orm             import Session
-from fastapi                    import HTTPException
-from fastapi                    import APIRouter, Cookie, Depends, Request, Response, status
-from fastapi.security           import OAuth2PasswordRequestForm
-from app.models.all_models      import User
-from app.db.session             import get_db
-from app.schemas.auth           import UserRegister, UserResponse
-from app.config                 import settings
-from app.repositories.user_repository import UserRepository
-from app.services.auth_service  import (register_user, authenticate_user, create_access_token, get_current_user)
-from app.services.auth_session  import AuthSessionService, get_auth_session_service
-from app.services.rate_limit    import RateLimit, RateLimiter, client_ip, get_rate_limiter
+from typing                             import Optional
+from sqlalchemy.orm                     import Session
+from fastapi                            import HTTPException
+from fastapi                            import APIRouter, Cookie, Depends, Request, Response, status
+from fastapi.security                   import OAuth2PasswordRequestForm
+from app.models.all_models              import User
+from app.db.session                     import get_db
+from app.schemas.auth                   import UserRegister, UserResponse
+from app.config                         import settings
+from app.repositories.user_repository   import UserRepository
+from app.services.auth_service          import (register_user, authenticate_user, create_access_token, get_current_user)
+from app.services.auth_session          import AuthSessionService, get_auth_session_service
+from app.services.rate_limit            import RateLimit, RateLimiter, client_ip, get_rate_limiter
 
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])

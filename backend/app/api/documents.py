@@ -7,7 +7,9 @@ from fastapi.responses          import FileResponse
 from app.config                 import settings
 from app.models.all_models      import User
 from app.services.auth_service  import get_current_user, get_current_admin_user
-from app.services.rag_pipeline  import delete_document
+from app.services.rag_pipeline  import delete_document, delete_all_documents
+from app.db.session             import get_db
+from sqlalchemy.orm             import Session as DbSession
 from app.services.task_service  import TaskTrackerService, get_task_service
 from app.services.rate_limit    import RateLimit, RateLimiter, get_rate_limiter
 from app.services.upload_validation import (
@@ -19,6 +21,27 @@ from app.services.upload_validation import (
 
 
 router = APIRouter(prefix="/documents", tags=["Documents & RAG"])
+
+
+@router.get("/", status_code=200)
+def list_documents(
+    current_admin: User = Depends(get_current_admin_user)
+):
+    """
+    List all documents currently stored on disk.
+    """
+    DOCUMENT_EXTENSIONS = {".pdf", ".docx", ".doc", ".txt"}
+    data_dir = settings.DATA_DIR
+    if not os.path.exists(data_dir):
+        return []
+    files = []
+    for fname in os.listdir(data_dir):
+        fpath = os.path.join(data_dir, fname)
+        ext = os.path.splitext(fname)[1].lower()
+        if os.path.isfile(fpath) and ext in DOCUMENT_EXTENSIONS:
+            files.append({"filename": fname, "size_bytes": os.path.getsize(fpath)})
+    files.sort(key=lambda f: f["filename"])
+    return files
 
 
 @router.post("/ingest", status_code=202)
@@ -173,6 +196,39 @@ def get_task_status(
         raise HTTPException(status_code=404, detail="Task not found or expired")
     
     return task
+
+
+# Bulk document deletion
+from pydantic import BaseModel as PydanticBaseModel
+class PasswordVerify(PydanticBaseModel):
+    password: str
+
+@router.delete("/all", status_code=200)
+def delete_all_documents_endpoint(
+    payload: PasswordVerify,
+    request: Request,
+    current_admin: User = Depends(get_current_admin_user)
+):
+    """
+    Delete ALL documents and their vectors. Requires password re-verification.
+    """
+    from app.services.auth_service import verify_password
+    if not verify_password(payload.password, current_admin.hashed_password):
+        raise HTTPException(
+            status_code=401,
+            detail="Incorrect password"
+        )
+    try:
+        result = delete_all_documents()
+        request.app.state.retriever = None
+        request.app.state.index = None
+        return {
+            "status": "success",
+            "message": f"Deleted {result['deleted_files']} file(s) and {result['nodes_deleted_from_docstore']} node(s).",
+            "details": result
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # Document deletion

@@ -6,19 +6,18 @@ if hasattr(sys.stdout, "reconfigure"):
     except Exception:
         pass
 
-from fastapi                    import FastAPI, Request
-from fastapi.responses          import JSONResponse
-from fastapi.middleware.cors    import CORSMiddleware
-from contextlib                 import asynccontextmanager
-from app.services.ai_logic      import initialize_ai
-from app.config                 import settings
-from app.api.router             import api_router
-from app.db.session             import engine, Base, SessionLocal
-from sqlalchemy                 import text, inspect
-from app.models.all_models      import User
-from app.services.admin_bootstrap import ensure_super_admin
-from app.services.request_security import is_csrf_token_valid, is_origin_allowed
-from app.logger                 import get_logger
+from fastapi                        import FastAPI, Request
+from fastapi.responses              import JSONResponse
+from fastapi.middleware.cors        import CORSMiddleware
+from contextlib                     import asynccontextmanager
+from app.services.ai_logic          import initialize_ai
+from app.config                     import settings
+from app.api.router                 import api_router
+from app.db.session                 import engine, Base, SessionLocal
+from sqlalchemy                     import text, inspect
+from app.services.admin_bootstrap   import ensure_super_admin
+from app.services.request_security  import is_csrf_token_valid, is_origin_allowed
+from app.logger                     import get_logger
 
 logger = get_logger(__name__)
 
@@ -71,7 +70,6 @@ async def lifespan(app: FastAPI):
     try:
         initialize_ai()
         app.state.ai_initialized = True
-        # We don't initialize chat_engine here anymore, but we can set up the index in rag_pipeline
     except Exception as e:
         logger.warning(f"Failed to initialize AI stack during startup: {e}")
         logger.info("API is running, but AI features may fail or will lazy-load later.")

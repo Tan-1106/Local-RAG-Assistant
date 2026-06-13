@@ -1,8 +1,7 @@
-from rq import Queue, SimpleWorker
-
-from app.config import settings
+from rq                 import Queue, SimpleWorker
+from app.config         import settings
+from app.logger         import get_logger
 from app.db.redis_store import get_rq_redis_client
-from app.logger import get_logger
 
 logger = get_logger(__name__)
 

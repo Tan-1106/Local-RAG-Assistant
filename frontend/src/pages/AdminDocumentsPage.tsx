@@ -1,6 +1,9 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, CheckCircle, Loader2, UploadCloud, XCircle } from 'lucide-react';
+import {
+  ArrowLeft, CheckCircle, Loader2, UploadCloud, XCircle, Database,
+  Trash2, AlertTriangle, FileText, RefreshCw, Eye, EyeOff,
+} from 'lucide-react';
 import {
   API_BASE_URL,
   UPLOAD_MAX_FILE_BYTES,
@@ -10,25 +13,27 @@ import {
 } from '../config';
 import { useAuth } from '../context/auth';
 
+// ── Types ──
 interface Task {
   task_id: string;
   type: string;
   status: 'queued' | 'processing' | 'completed' | 'failed';
-  meta: {
-    files?: string[];
-    count?: number;
-  };
+  meta: { files?: string[]; count?: number };
   error?: string;
   updated_at: number;
 }
 
+interface DocumentInfo {
+  filename: string;
+  size_bytes: number;
+}
+
+// ── Constants ──
 const TASK_STORAGE_PREFIX = 'legal-assistant-admin-tasks';
 const TASK_RETENTION_MS = 24 * 60 * 60 * 1000;
 const ALLOWED_EXTENSIONS = ['.pdf', '.docx', '.txt'];
 
-function storageKey(username: string) {
-  return `${TASK_STORAGE_PREFIX}:${username}`;
-}
+function storageKey(username: string) { return `${TASK_STORAGE_PREFIX}:${username}`; }
 
 function parseTask(value: unknown): Task | null {
   if (!value || typeof value !== 'object') return null;
@@ -40,9 +45,7 @@ function parseTask(value: unknown): Task | null {
     || typeof candidate.updated_at !== 'number'
     || !candidate.meta
     || typeof candidate.meta !== 'object'
-  ) {
-    return null;
-  }
+  ) return null;
   return candidate as Task;
 }
 
@@ -51,38 +54,128 @@ function loadStoredTasks(username: string): Task[] {
     const parsed: unknown = JSON.parse(localStorage.getItem(storageKey(username)) ?? '[]');
     if (!Array.isArray(parsed)) return [];
     const cutoff = Date.now() - TASK_RETENTION_MS;
-    return parsed
-      .map(parseTask)
+    return parsed.map(parseTask)
       .filter((task): task is Task => Boolean(task && task.updated_at >= cutoff))
       .slice(0, 50);
-  } catch {
-    return [];
-  }
+  } catch { return []; }
 }
 
 function taskFromResponse(value: unknown, current: Task): Task {
-  if (!value || typeof value !== 'object') {
-    throw new Error('Invalid task response');
-  }
+  if (!value || typeof value !== 'object') throw new Error('Invalid task response');
   const response = value as Record<string, unknown>;
   const status = response.status;
-  if (!['queued', 'processing', 'completed', 'failed'].includes(String(status))) {
-    throw new Error('Unknown task status');
-  }
-  const meta = response.meta && typeof response.meta === 'object'
-    ? response.meta as Task['meta']
-    : current.meta;
+  if (!['queued', 'processing', 'completed', 'failed'].includes(String(status))) throw new Error('Unknown task status');
+  const meta = response.meta && typeof response.meta === 'object' ? response.meta as Task['meta'] : current.meta;
   return {
     ...current,
     status: status as Task['status'],
     meta,
-    error: typeof response.error === 'string' && response.error
-      ? response.error
-      : undefined,
+    error: typeof response.error === 'string' && response.error ? response.error : undefined,
     updated_at: Date.now(),
   };
 }
 
+function formatBytes(bytes: number): string {
+  if (bytes === 0) return '0 B';
+  const k = 1024;
+  const sizes = ['B', 'KB', 'MB', 'GB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return `${parseFloat((bytes / Math.pow(k, i)).toFixed(1))} ${sizes[i]}`;
+}
+
+// ── Password Modal ──
+interface PasswordModalProps {
+  title: string;
+  description: string;
+  onConfirm: (password: string) => Promise<void>;
+  onCancel: () => void;
+}
+
+function PasswordModal({ title, description, onConfirm, onCancel }: PasswordModalProps) {
+  const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState('');
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => { inputRef.current?.focus(); }, []);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!password.trim()) return;
+    setIsLoading(true);
+    setError('');
+    try {
+      await onConfirm(password);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Xác minh thất bại');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  return (
+    <div className="dialog-backdrop" onClick={e => { if (e.target === e.currentTarget) onCancel(); }}>
+      <div className="glass-panel dialog-panel animate-slide-up">
+        <div className="flex items-center gap-3">
+          <div style={{
+            width: 36, height: 36, borderRadius: 8,
+            background: 'var(--danger-bg)', border: '1px solid var(--danger-border)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+          }}>
+            <AlertTriangle size={18} style={{ color: '#e74c3c' }} />
+          </div>
+          <div>
+            <h3 className="dialog-title">{title}</h3>
+          </div>
+        </div>
+
+        <p className="dialog-message">{description}</p>
+
+        <form onSubmit={handleSubmit} className="flex flex-col gap-3">
+          <div>
+            <label className="input-label" htmlFor="danger-password">Nhập mật khẩu Admin để xác nhận</label>
+            <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+              <input
+                ref={inputRef}
+                id="danger-password"
+                className="input"
+                type={showPassword ? 'text' : 'password'}
+                value={password}
+                onChange={e => setPassword(e.target.value)}
+                placeholder="••••••••"
+                style={{ paddingRight: '2.75rem' }}
+                required
+                disabled={isLoading}
+              />
+              <button
+                type="button"
+                className="auth-eye-btn"
+                onClick={() => setShowPassword(!showPassword)}
+                aria-label="Toggle password"
+              >
+                {showPassword ? <EyeOff size={15} /> : <Eye size={15} />}
+              </button>
+            </div>
+          </div>
+
+          {error && (
+            <div className="auth-error error" role="alert">{error}</div>
+          )}
+
+          <div className="dialog-actions">
+            <button type="button" className="btn btn-ghost" onClick={onCancel} disabled={isLoading}>Hủy</button>
+            <button type="submit" className="btn btn-danger" disabled={!password.trim() || isLoading}>
+              {isLoading ? <><Loader2 size={14} className="spin" /> Đang xử lý...</> : 'Xác nhận xóa'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+// ── Main Page ──
 export default function AdminDocumentsPage() {
   const { user, apiFetch } = useAuth();
   const navigate = useNavigate();
@@ -90,6 +183,11 @@ export default function AdminDocumentsPage() {
   const [tasks, setTasks] = useState<Task[]>(() => loadStoredTasks(username));
   const [isUploading, setIsUploading] = useState(false);
   const [error, setError] = useState('');
+  const [documents, setDocuments] = useState<DocumentInfo[]>([]);
+  const [isDragging, setIsDragging] = useState(false);
+  const [deletingFile, setDeletingFile] = useState<string | null>(null);
+  const [passwordModal, setPasswordModal] = useState<null | 'all-docs' | 'all-sessions'>(null);
+
   const activeTaskKey = useMemo(
     () => tasks
       .filter(task => task.status === 'queued' || task.status === 'processing')
@@ -99,14 +197,13 @@ export default function AdminDocumentsPage() {
     [tasks],
   );
 
+  // Persist tasks
   useEffect(() => {
-    try {
-      localStorage.setItem(storageKey(username), JSON.stringify(tasks.slice(0, 50)));
-    } catch (storageError) {
-      console.error('Could not persist task history', storageError);
-    }
+    try { localStorage.setItem(storageKey(username), JSON.stringify(tasks.slice(0, 50))); }
+    catch (storageError) { console.error('Could not persist task history', storageError); }
   }, [tasks, username]);
 
+  // Poll active tasks
   useEffect(() => {
     if (!activeTaskKey) return;
     const activeTaskIds = activeTaskKey.split('|');
@@ -117,71 +214,56 @@ export default function AdminDocumentsPage() {
       for (const taskId of activeTaskIds) {
         if (controller.signal.aborted) return;
         try {
-          const response = await apiFetch(
-            `${API_BASE_URL}/documents/tasks/${encodeURIComponent(taskId)}`,
-            { signal: controller.signal },
-          );
+          const response = await apiFetch(`${API_BASE_URL}/documents/tasks/${encodeURIComponent(taskId)}`, { signal: controller.signal });
           if (response.ok) {
             const data: unknown = await response.json();
-            setTasks(previous => previous.map(item =>
-              item.task_id === taskId ? taskFromResponse(data, item) : item
-            ));
+            setTasks(previous => previous.map(item => item.task_id === taskId ? taskFromResponse(data, item) : item));
           } else if (response.status === 404) {
             setTasks(previous => previous.map(item =>
-              item.task_id === taskId
-                ? { ...item, status: 'failed', error: 'Job đã hết hạn hoặc không tồn tại.', updated_at: Date.now() }
-                : item
+              item.task_id === taskId ? { ...item, status: 'failed', error: 'Job đã hết hạn.', updated_at: Date.now() } : item
             ));
-          } else if (response.status === 401 || response.status === 403) {
-            setError('Phiên quản trị đã hết hạn hoặc không còn quyền truy cập.');
-          } else if (response.status === 429) {
-            setError('Đang kiểm tra trạng thái quá nhanh. Hệ thống sẽ thử lại.');
-          } else {
-            setError(`Không thể kiểm tra trạng thái job (${response.status}).`);
           }
         } catch (pollError) {
-          if (!controller.signal.aborted) {
-            console.error(pollError);
-            setError('Tạm thời không thể kiểm tra trạng thái job.');
-          }
+          if (!controller.signal.aborted) console.error(pollError);
         }
       }
       if (!controller.signal.aborted) timer = window.setTimeout(poll, 2000);
     };
 
     void poll();
-    return () => {
-      controller.abort();
-      if (timer) window.clearTimeout(timer);
-    };
+    return () => { controller.abort(); if (timer) window.clearTimeout(timer); };
   }, [activeTaskKey, apiFetch]);
 
-  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const input = event.currentTarget;
-    if (!input.files?.length) return;
+  // Load documents list
+  const loadDocuments = useCallback(async () => {
+    try {
+      const res = await apiFetch(`${API_BASE_URL}/documents/`);
+      if (res.ok) {
+        const data = await res.json() as unknown;
+        if (Array.isArray(data)) {
+          setDocuments(data.map((d: unknown) => {
+            const item = d as Record<string, unknown>;
+            return { filename: String(item.filename ?? ''), size_bytes: Number(item.size_bytes ?? 0) };
+          }));
+        }
+      }
+    } catch { /* silent */ }
+  }, [apiFetch]);
 
-    const selectedFiles = Array.from(input.files);
-    const unsupportedFiles = selectedFiles.filter(file =>
-      !ALLOWED_EXTENSIONS.some(extension => file.name.toLowerCase().endsWith(extension))
-    );
-    const oversizedFiles = selectedFiles.filter(file => file.size > UPLOAD_MAX_FILE_BYTES);
-    const totalBytes = selectedFiles.reduce((total, file) => total + file.size, 0);
+  useEffect(() => {
+    const timer = window.setTimeout(() => void loadDocuments(), 0);
+    return () => window.clearTimeout(timer);
+  }, [loadDocuments]);
 
-    if (selectedFiles.length > UPLOAD_MAX_FILES) {
-      setError(`Chỉ được tải tối đa ${UPLOAD_MAX_FILES} tệp mỗi lần.`);
-      input.value = '';
-      return;
-    }
-    if (unsupportedFiles.length > 0) {
-      setError(`Không hỗ trợ: ${unsupportedFiles.map(file => file.name).join(', ')}`);
-      input.value = '';
-      return;
-    }
-    if (oversizedFiles.length > 0 || totalBytes > UPLOAD_MAX_TOTAL_BYTES) {
-      setError('Tệp vượt quá giới hạn 10 MB/tệp hoặc 50 MB/tổng.');
-      input.value = '';
-      return;
-    }
+  // Upload handler
+  const processUpload = async (selectedFiles: File[]) => {
+    const unsupported = selectedFiles.filter(f => !ALLOWED_EXTENSIONS.some(ext => f.name.toLowerCase().endsWith(ext)));
+    const oversized = selectedFiles.filter(f => f.size > UPLOAD_MAX_FILE_BYTES);
+    const totalBytes = selectedFiles.reduce((sum, f) => sum + f.size, 0);
+
+    if (selectedFiles.length > UPLOAD_MAX_FILES) { setError(`Tối đa ${UPLOAD_MAX_FILES} tệp/lần.`); return; }
+    if (unsupported.length > 0) { setError(`Không hỗ trợ: ${unsupported.map(f => f.name).join(', ')}`); return; }
+    if (oversized.length > 0 || totalBytes > UPLOAD_MAX_TOTAL_BYTES) { setError('Tệp vượt quá giới hạn 10 MB/tệp hoặc 50 MB/tổng.'); return; }
 
     setIsUploading(true);
     setError('');
@@ -190,38 +272,76 @@ export default function AdminDocumentsPage() {
 
     try {
       const response = await apiFetch(`${API_BASE_URL}/documents/ingest`, {
-        method: 'POST',
-        body: formData,
-        retryOnAuth: false,
-        timeoutMs: UPLOAD_TIMEOUT_MS,
+        method: 'POST', body: formData, retryOnAuth: false, timeoutMs: UPLOAD_TIMEOUT_MS,
       });
       if (!response.ok) {
         const detail = await response.json().catch(() => null) as { detail?: string } | null;
         throw new Error(detail?.detail ?? `Tải tài liệu thất bại (${response.status}).`);
       }
       const data = await response.json() as Record<string, unknown>;
-      if (
-        typeof data.task_id !== 'string'
-        || !Array.isArray(data.files)
-        || !data.files.every(filename => typeof filename === 'string')
-      ) {
-        throw new Error('Phản hồi enqueue không hợp lệ.');
-      }
-      const queuedTask: Task = {
-        task_id: data.task_id as string,
-        type: 'ingest',
-        status: 'queued',
-        meta: { files: data.files as string[] },
-        updated_at: Date.now(),
-      };
+      if (typeof data.task_id !== 'string' || !Array.isArray(data.files)) throw new Error('Phản hồi enqueue không hợp lệ.');
+      const queuedTask: Task = { task_id: data.task_id as string, type: 'ingest', status: 'queued', meta: { files: data.files as string[] }, updated_at: Date.now() };
       setTasks(previous => [queuedTask, ...previous].slice(0, 50));
+      void loadDocuments();
     } catch (uploadError) {
-      console.error(uploadError);
       setError(uploadError instanceof Error ? uploadError.message : 'Không thể tải tài liệu.');
     } finally {
       setIsUploading(false);
-      input.value = '';
     }
+  };
+
+  const handleFileInputChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const input = event.currentTarget;
+    if (!input.files?.length) return;
+    await processUpload(Array.from(input.files));
+    input.value = '';
+  };
+
+  const handleDrop = async (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+    if (isUploading) return;
+    await processUpload(Array.from(e.dataTransfer.files));
+  };
+
+  const handleDeleteFile = async (filename: string) => {
+    setDeletingFile(filename);
+    try {
+      const res = await apiFetch(`${API_BASE_URL}/documents/${encodeURIComponent(filename)}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error(`Xóa thất bại (${res.status})`);
+      setDocuments(prev => prev.filter(d => d.filename !== filename));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Không thể xóa tài liệu.');
+    } finally {
+      setDeletingFile(null);
+    }
+  };
+
+  const handleDeleteAllDocs = async (password: string) => {
+    const res = await apiFetch(`${API_BASE_URL}/documents/all`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password }),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({})) as { detail?: string };
+      throw new Error(body.detail ?? `Lỗi ${res.status}`);
+    }
+    setDocuments([]);
+    setPasswordModal(null);
+  };
+
+  const handleDeleteAllSessions = async (password: string) => {
+    const res = await apiFetch(`${API_BASE_URL}/sessions/all`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password }),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({})) as { detail?: string };
+      throw new Error(body.detail ?? `Lỗi ${res.status}`);
+    }
+    setPasswordModal(null);
   };
 
   if (user?.role !== 'admin') {
@@ -229,59 +349,233 @@ export default function AdminDocumentsPage() {
   }
 
   return (
-    <div className="app-container flex-col p-8" style={{ overflowY: 'auto' }}>
-      <div className="flex items-center gap-4 mb-8">
-        <button onClick={() => navigate('/')} className="btn btn-ghost p-2 rounded-full" aria-label="Quay lại">
-          <ArrowLeft size={24} />
+    <div className="admin-page" style={{ overflowY: 'auto', minHeight: '100vh' }}>
+      {/* Header */}
+      <div className="admin-header">
+        <div className="admin-header-left">
+          <button
+            onClick={() => navigate('/')}
+            className="btn btn-ghost icon-button"
+            aria-label="Quay lại"
+            id="admin-back-btn"
+          >
+            <ArrowLeft size={18} />
+          </button>
+          <div className="admin-icon-box">
+            <Database size={20} color="#fff" strokeWidth={1.5} />
+          </div>
+          <div>
+            <h1 className="admin-title">Quản trị Tài liệu</h1>
+            <p className="admin-subtitle">Quản lý cơ sở dữ liệu pháp luật RAG</p>
+          </div>
+        </div>
+        <button
+          onClick={() => { void loadDocuments(); }}
+          className="btn btn-secondary"
+          id="admin-refresh-btn"
+        >
+          <RefreshCw size={15} />
+          <span>Tải lại</span>
         </button>
-        <h1 className="text-2xl font-bold">Quản Trị Tài Liệu RAG</h1>
       </div>
 
-      <div className="glass-panel p-8 mb-8 text-center" style={{ borderStyle: 'dashed' }}>
-        <input
-          type="file"
-          multiple
-          accept=".pdf,.docx,.txt"
-          onChange={handleFileUpload}
-          style={{ display: 'none' }}
-          id="file-upload"
-          disabled={isUploading}
-        />
-        <label htmlFor="file-upload" className="flex flex-col items-center cursor-pointer">
-          <UploadCloud size={48} className="text-muted mb-4" />
-          <h3 className="text-lg font-bold mb-2">Tải tài liệu pháp luật lên hệ thống</h3>
-          <p className="text-sm text-muted">PDF, DOCX, TXT. Tối đa 10 MB/tệp và 50 MB/lần tải.</p>
-          <div className="btn btn-primary mt-4 pointer-events-none">
-            {isUploading ? 'Đang tải lên...' : 'Chọn Tệp Bắt Đầu'}
+      <div className="admin-content">
+        {/* Upload Zone */}
+        <div className="admin-card glass-panel">
+          <div className="admin-card-header">
+            <span className="admin-card-title">
+              <UploadCloud size={16} />
+              Tải tài liệu mới
+            </span>
           </div>
-        </label>
-      </div>
-
-      {error && <div className="error-banner mb-4" role="alert" aria-live="assertive">{error}</div>}
-      <h2 className="text-lg font-bold mb-4">Tiến trình xử lý nền (RQ Jobs)</h2>
-      <div className="flex-col gap-4">
-        {tasks.length === 0 ? (
-          <p className="text-sm text-muted">Chưa có job nào được thực thi.</p>
-        ) : tasks.map(task => (
-          <div key={task.task_id} className="glass-panel p-4 flex items-center justify-between">
-            <div className="flex-col">
-              <span className="text-sm font-bold">Job ID: <span className="text-muted font-normal">{task.task_id}</span></span>
-              <span className="text-xs text-muted mt-1">
-                Loại: {task.type.toUpperCase()} | Files: {task.meta.files?.join(', ') ?? task.meta.count ?? 0}
-              </span>
-              {task.error && <span className="text-xs text-danger mt-1">Lỗi: {task.error}</span>}
-            </div>
-            <div className="flex items-center gap-2">
-              {(task.status === 'queued' || task.status === 'processing') && (
-                <Loader2 size={18} className="text-primary spin" />
+          <div className="admin-card-body">
+            <input
+              type="file" multiple accept=".pdf,.docx,.txt"
+              onChange={handleFileInputChange}
+              style={{ display: 'none' }} id="file-upload"
+              disabled={isUploading}
+            />
+            <label
+              htmlFor="file-upload"
+              className={`upload-zone ${isDragging ? 'dragging' : ''}`}
+              onDragOver={e => { e.preventDefault(); setIsDragging(true); }}
+              onDragLeave={() => setIsDragging(false)}
+              onDrop={handleDrop}
+            >
+              {isUploading ? (
+                <div className="flex flex-col items-center gap-3">
+                  <Loader2 size={36} className="spin" style={{ color: 'var(--brown-400)' }} />
+                  <p className="text-sm font-medium">Đang tải lên...</p>
+                </div>
+              ) : (
+                <div className="flex flex-col items-center gap-3">
+                  <UploadCloud size={36} className="text-faint" />
+                  <div>
+                    <p className="font-medium" style={{ color: 'var(--text)' }}>Kéo thả tệp vào đây</p>
+                    <p className="text-sm text-muted mt-1">hoặc nhấn để chọn tệp</p>
+                  </div>
+                  <div className="btn btn-primary pointer-events-none">Chọn tệp</div>
+                  <p className="text-xs text-faint">PDF, DOCX, TXT • Tối đa {UPLOAD_MAX_FILES} tệp • 10 MB/tệp • 50 MB/lần</p>
+                </div>
               )}
-              {task.status === 'completed' && <CheckCircle size={18} style={{ color: 'green' }} />}
-              {task.status === 'failed' && <XCircle size={18} className="text-danger" />}
-              <span className="text-sm font-bold uppercase">{task.status}</span>
+            </label>
+          </div>
+        </div>
+
+        {error && (
+          <div className="error-banner animate-slide-up" role="alert" aria-live="assertive">{error}</div>
+        )}
+
+        {/* Documents Table */}
+        <div className="admin-card glass-panel">
+          <div className="admin-card-header">
+            <span className="admin-card-title">
+              <FileText size={16} />
+              Danh sách tài liệu ({documents.length})
+            </span>
+          </div>
+          <div className="doc-table-wrap">
+            {documents.length === 0 ? (
+              <div className="admin-card-body">
+                <div className="flex flex-col items-center gap-2 py-6 text-center">
+                  <FileText size={28} className="text-faint" />
+                  <p className="text-sm text-muted">Chưa có tài liệu nào trong hệ thống.</p>
+                </div>
+              </div>
+            ) : (
+              <table className="doc-table">
+                <thead>
+                  <tr>
+                    <th>Tên tài liệu</th>
+                    <th>Loại</th>
+                    <th>Kích thước</th>
+                    <th style={{ textAlign: 'right' }}>Hành động</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {documents.map(doc => (
+                    <tr key={doc.filename}>
+                      <td>
+                        <div className="doc-filename">
+                          <FileText size={15} style={{ color: 'var(--brown-400)', flexShrink: 0 }} />
+                          <span className="truncate" style={{ maxWidth: '300px' }}>{doc.filename}</span>
+                        </div>
+                      </td>
+                      <td>
+                        <span className="doc-badge doc-badge-pdf">
+                          {doc.filename.split('.').pop()?.toUpperCase() ?? 'FILE'}
+                        </span>
+                      </td>
+                      <td>{formatBytes(doc.size_bytes)}</td>
+                      <td style={{ textAlign: 'right' }}>
+                        <button
+                          className="btn btn-danger"
+                          style={{ padding: '0.35rem 0.75rem', fontSize: '0.8rem' }}
+                          onClick={() => void handleDeleteFile(doc.filename)}
+                          disabled={deletingFile === doc.filename}
+                          id={`delete-doc-${doc.filename}`}
+                        >
+                          {deletingFile === doc.filename
+                            ? <Loader2 size={13} className="spin" />
+                            : <Trash2 size={13} />}
+                          <span>Xóa</span>
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </div>
+
+        {/* Tasks */}
+        {tasks.length > 0 && (
+          <div className="admin-card glass-panel">
+            <div className="admin-card-header">
+              <span className="admin-card-title">
+                <Loader2 size={16} />
+                Tiến trình xử lý nền
+              </span>
+            </div>
+            <div className="admin-card-body flex-col gap-3">
+              {tasks.map(task => (
+                <div key={task.task_id} className={`task-status ${task.status === 'completed' ? 'completed' : task.status === 'failed' ? 'failed' : 'queued'}`}>
+                  <div className="flex items-center gap-2 shrink-0">
+                    {(task.status === 'queued' || task.status === 'processing') && <Loader2 size={15} className="spin" />}
+                    {task.status === 'completed' && <CheckCircle size={15} />}
+                    {task.status === 'failed' && <XCircle size={15} />}
+                    <span className="font-medium uppercase" style={{ fontSize: '0.75rem' }}>{task.status}</span>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <span className="text-xs truncate">
+                      {task.type.toUpperCase()} • {task.meta.files?.join(', ') ?? `${task.meta.count ?? 0} files`}
+                    </span>
+                    {task.error && <p className="text-xs text-danger mt-1">{task.error}</p>}
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
-        ))}
+        )}
+
+        {/* Danger Zone */}
+        <div className="danger-zone">
+          <div className="danger-zone-header">
+            <AlertTriangle size={16} style={{ color: '#e74c3c' }} />
+            <span className="danger-zone-title">Vùng nguy hiểm</span>
+          </div>
+          <div className="danger-zone-body">
+            <div className="danger-zone-item">
+              <div className="danger-zone-item-info">
+                <p className="danger-zone-item-title">Xóa toàn bộ tài liệu</p>
+                <p className="danger-zone-item-desc">Xóa tất cả tài liệu đã upload, dữ liệu vector và docstore. Hành động không thể hoàn tác.</p>
+              </div>
+              <button
+                className="btn btn-danger shrink-0"
+                onClick={() => setPasswordModal('all-docs')}
+                id="admin-delete-all-docs-btn"
+              >
+                <Trash2 size={14} />
+                Xóa tất cả tài liệu
+              </button>
+            </div>
+
+            <div className="danger-zone-item">
+              <div className="danger-zone-item-info">
+                <p className="danger-zone-item-title">Xóa toàn bộ lịch sử chat</p>
+                <p className="danger-zone-item-desc">Xóa tất cả các phiên hội thoại và tin nhắn của mọi người dùng trong hệ thống.</p>
+              </div>
+              <button
+                className="btn btn-danger shrink-0"
+                onClick={() => setPasswordModal('all-sessions')}
+                id="admin-delete-all-sessions-btn"
+              >
+                <Trash2 size={14} />
+                Xóa tất cả sessions
+              </button>
+            </div>
+          </div>
+        </div>
       </div>
+
+      {/* Password Modals */}
+      {passwordModal === 'all-docs' && (
+        <PasswordModal
+          title="Xóa toàn bộ tài liệu?"
+          description="Hành động này sẽ xóa vĩnh viễn toàn bộ tài liệu, dữ liệu vector embedding và docstore. Hành động không thể hoàn tác."
+          onConfirm={handleDeleteAllDocs}
+          onCancel={() => setPasswordModal(null)}
+        />
+      )}
+      {passwordModal === 'all-sessions' && (
+        <PasswordModal
+          title="Xóa toàn bộ lịch sử chat?"
+          description="Hành động này sẽ xóa vĩnh viễn toàn bộ phiên hội thoại và tin nhắn của tất cả người dùng trong hệ thống."
+          onConfirm={handleDeleteAllSessions}
+          onCancel={() => setPasswordModal(null)}
+        />
+      )}
     </div>
   );
 }

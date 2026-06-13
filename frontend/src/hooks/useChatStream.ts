@@ -10,7 +10,7 @@ export interface SourceNode {
   metadata: Record<string, unknown>;
 }
 
-export function useChatStream(sessionId: string | null) {
+export function useChatStream() {
   const [isStreaming, setIsStreaming] = useState(false);
   const controllerRef = useRef<AbortController | null>(null);
   const { apiFetch } = useAuth();
@@ -21,13 +21,14 @@ export function useChatStream(sessionId: string | null) {
     setIsStreaming(false);
   }, []);
 
-  useEffect(() => cancelStream, [cancelStream, sessionId]);
+  useEffect(() => cancelStream, [cancelStream]);
 
   const sendMessage = async (
+    sessionId: string,
     message: string,
     onChunk: (chunk: string) => void,
     onSources: (sources: SourceNode[]) => void,
-    onError: (message: string) => void,
+    onError: (message: string) => void
   ) => {
     cancelStream();
     const controller = new AbortController();
@@ -35,9 +36,7 @@ export function useChatStream(sessionId: string | null) {
     setIsStreaming(true);
 
     try {
-      const endpoint = sessionId
-        ? `${API_BASE_URL}/sessions/${sessionId}/chat`
-        : `${API_BASE_URL}/chat/`;
+      const endpoint = `${API_BASE_URL}/sessions/${sessionId}/chat`;
 
       const response = await apiFetch(endpoint, {
         method: 'POST',
@@ -62,17 +61,18 @@ export function useChatStream(sessionId: string | null) {
 
       const processEvent = (event: string) => {
         const dataStr = getSseData(event);
-        if (!dataStr) return;
+        if (!dataStr) return false;
         if (dataStr.trim() === '[DONE]') {
           streamDone = true;
-          return;
+          return false;
         }
 
         try {
           const data: unknown = JSON.parse(dataStr);
-          if (!data || typeof data !== 'object') return;
+          if (!data || typeof data !== 'object') return false;
           if ('chunk' in data && typeof data.chunk === 'string') {
             onChunk(data.chunk);
+            return true;
           } else if ('sources' in data) {
             onSources(parseSources(data.sources));
           } else if ('error' in data) {
@@ -82,6 +82,7 @@ export function useChatStream(sessionId: string | null) {
         } catch (error) {
           console.warn('Ignored malformed SSE event', error);
         }
+        return false;
       };
 
       while (!streamDone) {
@@ -89,7 +90,12 @@ export function useChatStream(sessionId: string | null) {
         eventBuffer += decoder.decode(value, { stream: !done });
         const extracted = extractSseEvents(eventBuffer);
         eventBuffer = extracted.remainder;
-        extracted.events.forEach(processEvent);
+        for (let index = 0; index < extracted.events.length; index += 1) {
+          const renderedChunk = processEvent(extracted.events[index]);
+          if (renderedChunk && index < extracted.events.length - 1) {
+            await new Promise<void>(resolve => window.requestAnimationFrame(() => resolve()));
+          }
+        }
         if (done) break;
       }
 

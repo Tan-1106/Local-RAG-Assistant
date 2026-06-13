@@ -1,12 +1,12 @@
 import os
 import threading
 import uuid
+from pathlib import Path
 from qdrant_client.http                 import models as qdrant_models
 from llama_index.core.storage.docstore  import SimpleDocumentStore
 from llama_index.core.node_parser       import HierarchicalNodeParser, get_leaf_nodes
 from llama_index.core                   import SimpleDirectoryReader, StorageContext, VectorStoreIndex
-from llama_index.core.extractors        import TitleExtractor, KeywordExtractor
-from llama_index.core.ingestion         import IngestionPipeline
+from llama_index.readers.file           import PyMuPDFReader
 from app.config                         import settings
 from app.db.qdrant_store                import init_qdrant_vector_store
 from app.logger                         import get_logger
@@ -153,35 +153,62 @@ def _ingest_documents(data_path: str = None, specific_files: list[str] = None):
             logger.info(f"No documents found in {path}. Please add documents to ingest.")
             return
 
+    file_extractor = {".pdf": PyMuPDFReader()}
     if input_files:
-        documents = SimpleDirectoryReader(input_files=input_files).load_data()
+        documents = SimpleDirectoryReader(
+            input_files=input_files,
+            file_extractor=file_extractor
+        ).load_data()
     else:
         documents = SimpleDirectoryReader(
             path,
-            required_exts=[".pdf", ".txt", ".docx", ".doc"]
+            required_exts=[".pdf", ".txt", ".docx", ".doc"],
+            file_extractor=file_extractor
         ).load_data()
 
     if not documents:
         logger.warning("No valid documents found to ingest.")
         return
 
+    for document in documents:
+        file_name = document.metadata.get("file_name", "")
+        source = document.metadata.get("source")
+        if source is not None:
+            document.metadata["page_label"] = str(source)
+        if file_name:
+            document.metadata["document_title"] = Path(file_name).stem
+
+        document.excluded_embed_metadata_keys = list({
+            *document.excluded_embed_metadata_keys,
+            "document_title",
+            "file_path",
+            "ingestion_id",
+            "page_label",
+            "source",
+            "total_pages",
+        })
+        document.excluded_llm_metadata_keys = list({
+            *document.excluded_llm_metadata_keys,
+            "file_path",
+            "ingestion_id",
+            "source",
+            "total_pages",
+        })
+
     node_parser = HierarchicalNodeParser.from_defaults(
-        chunk_sizes=[1024, 512, 128]
-    )
-    extractors = [
-        TitleExtractor(nodes=5)
-    ]
-    
-    # Run the Ingestion Pipeline
-    pipeline = IngestionPipeline(
-        transformations=[node_parser] + extractors
+        chunk_sizes=[1024, 512, 256],
+        chunk_overlap=48,
     )
 
-    logger.info("Running Ingestion Pipeline (This may take a while due to metadata extraction)...")
-    nodes = pipeline.run(documents=documents)
+    logger.info("Running ingestion pipeline...")
+    nodes = node_parser.get_nodes_from_documents(documents)
     ingestion_id = str(uuid.uuid4())
     for node in nodes:
         node.metadata["ingestion_id"] = ingestion_id
+        if "ingestion_id" not in node.excluded_embed_metadata_keys:
+            node.excluded_embed_metadata_keys.append("ingestion_id")
+        if "ingestion_id" not in node.excluded_llm_metadata_keys:
+            node.excluded_llm_metadata_keys.append("ingestion_id")
 
     leaf_nodes = get_leaf_nodes(nodes)
     docstore_path = settings.DOCSTORE_PATH
@@ -216,12 +243,48 @@ def _ingest_documents(data_path: str = None, specific_files: list[str] = None):
     for filename in filenames:
         _delete_indexed_document(filename, preserve_ingestion_id=ingestion_id)
 
+    try:
+        from app.db.redis_store import get_redis_client
+
+        get_redis_client().incr("rag:index-version")
+    except Exception as error:
+        logger.warning("Could not invalidate the cached RAG retriever: %s", error)
+
     return index
 
 
 def delete_document(filename: str, keep_file: bool = False):
     with _index_lock:
         return _delete_document(filename, keep_file)
+
+
+def delete_all_documents():
+    """
+    Deletes all documents from the local disk, Qdrant vector store, and local Docstore.
+    """
+    with _index_lock:
+        data_dir = os.path.abspath(settings.DATA_DIR)
+        if not os.path.exists(data_dir):
+            return {"deleted_files": 0, "nodes_deleted_from_docstore": 0}
+
+        deleted_files_count = 0
+        total_nodes_deleted = 0
+
+        for filename in os.listdir(data_dir):
+            file_path = os.path.join(data_dir, filename)
+            if os.path.isfile(file_path):
+                try:
+                    result = _delete_document(filename)
+                    if result["deleted_from_disk"]:
+                        deleted_files_count += 1
+                    total_nodes_deleted += result["nodes_deleted_from_docstore"]
+                except Exception as e:
+                    logger.error(f"Failed to delete {filename}: {e}")
+
+        return {
+            "deleted_files": deleted_files_count,
+            "nodes_deleted_from_docstore": total_nodes_deleted
+        }
 
 
 def _delete_document(filename: str, keep_file: bool = False):

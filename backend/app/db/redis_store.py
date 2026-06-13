@@ -21,7 +21,6 @@ def get_redis_client() -> redis.Redis:
             socket_timeout=5,
             socket_connect_timeout=5
         )
-    
     return redis.Redis(connection_pool=_redis_pool)
 
 

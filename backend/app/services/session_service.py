@@ -75,6 +75,16 @@ class SessionService:
         return MessageRepository.get_session_messages(db, session_id)
 
     @staticmethod
+    def delete_all_sessions(db: Session) -> None:
+        """
+        Deletes all chat sessions from the database.
+
+        Args:
+            db (Session): The database session.
+        """
+        SessionRepository.delete_all(db)
+
+    @staticmethod
     def delete_session(db: Session, session_id: str, user_id: int) -> Dict[str, str]:
         """
         Deletes a specific chat session, verifying ownership first.
@@ -130,29 +140,35 @@ class SessionService:
         return updated_session
 
     @staticmethod
-    def process_chat_message(
-        db: Session, 
-        session_id: str, 
-        user_id: int, 
-        request: ChatRequest, 
+    async def process_chat_message(
+        db: Session,
+        session_id: str,
+        user_id: int,
+        request: ChatRequest,
         retriever: AutoMergingRetriever
     ):
         """
-        Processes an incoming user chat message, queries the AI engine with context,
-        and yields Server-Sent Events (SSE) for token streaming.
-        Persists the conversation history after the stream ends.
+        Generates an SSE stream for chat response, processing context and saving history.
+        All synchronous SQLAlchemy calls are run via run_in_executor to avoid
+        blocking or corrupting the async event loop during streaming.
         """
-        # 1. Existence and ownership check
-        session = SessionRepository.get_by_id_and_user(db, session_id, user_id)
+        import asyncio
+        loop = asyncio.get_event_loop()
+
+        def _get_session_and_history():
+            session = SessionRepository.get_by_id_and_user(db, session_id, user_id)
+            if not session:
+                return None, []
+            history = MessageRepository.get_recent_history(db, session_id, limit=20)
+            return session, list(history)
+
+        # 1. Load session + history on thread pool (sync DB ops)
+        session, history = await loop.run_in_executor(None, _get_session_and_history)
         if not session:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Chat session not found"
-            )
-            
-        # 2. Fetch conversational history (Sliding Window: last 20 messages)
-        history = MessageRepository.get_recent_history(db, session_id, limit=20)
-        
+            yield f"data: {json.dumps({'error': 'Chat session not found'}, ensure_ascii=False)}\n\n"
+            yield "data: [DONE]\n\n"
+            return
+
         try:
             # 3. Call AI query engine passing history context
             llama_history = []
@@ -160,17 +176,45 @@ class SessionService:
                 role = MessageRole.USER if msg.role == "user" else MessageRole.ASSISTANT
                 llama_history.append(LlamaChatMessage(role=role, content=msg.content))
                 
+            CUSTOM_SYSTEM_PROMPT = (
+                "Bạn là một Luật sư, chuyên gia tư vấn pháp luật Việt Nam vô cùng tận tâm và chuyên nghiệp.\n"
+                "Bạn ĐƯỢC CUNG CẤP một cơ sở dữ liệu pháp luật (ngữ cảnh) bên dưới. Hãy đọc kỹ và dùng CHỈ thông tin từ đó để tư vấn cho người dùng.\n"
+                "TUYỆT ĐỐI KHÔNG tự bịa ra các Điều luật, Nghị định hay Thông tư không có trong cơ sở dữ liệu.\n"
+                "Khi trả lời, hãy nói chuyện tự nhiên như một luật sư với thân chủ. KHÔNG DÙNG các câu như: 'Theo ngữ cảnh được cung cấp', 'Theo cơ sở dữ liệu', 'Tài liệu không nói rõ'. Hãy nói: 'Theo quy định pháp luật hiện hành...'.\n"
+                "Nếu trong cơ sở dữ liệu không quy định mức cụ thể, hãy diễn đạt tự nhiên dựa trên phần thông tin có sẵn (ví dụ: 'pháp luật chưa quy định mức cụ thể bằng số tiền, mà được xác định dựa trên hợp đồng / thực tế...'). Nếu hoàn toàn không có thông tin, hãy nói: 'Rất tiếc, tôi chưa tìm thấy quy định cụ thể về vấn đề này trong hệ thống.'\n"
+                "Hãy luôn trả lời theo cấu trúc sau (không tự ý thay đổi tiêu đề):\n"
+                "1. **Kết luận:** Trả lời trực tiếp vào trọng tâm câu hỏi một cách ngắn gọn, súc tích.\n"
+                "2. **Căn cứ pháp lý:** Nêu rõ Điều, Khoản, và Tên văn bản pháp luật áp dụng (chỉ nêu các văn bản CÓ TRONG dữ liệu được cung cấp).\n"
+                "3. **Phân tích chi tiết:** Giải thích quy định pháp luật đó áp dụng vào trường hợp của người dùng như thế nào cho dễ hiểu.\n"
+                "4. **Lời khuyên/Khuyến nghị:** Đưa ra hướng xử lý thực tế, các cơ quan cần liên hệ, hoặc các bước tiếp theo."
+            )
+
             chat_engine = ContextChatEngine.from_defaults(
                 retriever=retriever,
+                system_prompt=CUSTOM_SYSTEM_PROMPT,
                 verbose=True
             )
             
-            # Use stream_chat instead of chat
-            response = chat_engine.stream_chat(request.question, chat_history=llama_history)
+            # Use astream_chat for true asynchronous real-time streaming
+            response = await chat_engine.astream_chat(request.question, chat_history=llama_history)
             
-            # 4. Stream tokens
+            # Log the retrieved text passages (context nodes) that are passed to the LLM
+            if hasattr(response, "source_nodes") and response.source_nodes:
+                logger.info("==================================================")
+                logger.info(f"📄 [AI Logic] CÁC ĐOẠN VĂN BẢN (CONTEXT CHUNKS) ĐƯỢC GỬI ĐẾN LLM ĐỂ TẠO CÂU TRẢ LỜI:")
+                for i, node in enumerate(response.source_nodes, 1):
+                    file_name = node.metadata.get("file_name", "N/A")
+                    page_label = node.metadata.get("page_label") or node.metadata.get("source", "N/A")
+                    score = node.score if node.score is not None else 0.0
+                    logger.info(f"--- Đoạn {i} (File: {file_name}, Trang: {page_label}, Score: {score:.4f}) ---")
+                    logger.info(node.text.strip())
+                logger.info("==================================================")
+            else:
+                logger.info("📄 [AI Logic] Không tìm thấy đoạn văn bản context phù hợp nào để gửi đến LLM.")
+
+            # 4. Stream tokens asynchronously
             buffer = ""
-            for token in response.response_gen:
+            async for token in response.async_response_gen():
                 buffer += token
                 # Yield SSE chunk
                 yield f"data: {json.dumps({'chunk': token}, ensure_ascii=False)}\n\n"
@@ -185,48 +229,49 @@ class SessionService:
                         "metadata": node.metadata
                     })
             
-            # 6. Persist the completed turn before signaling stream completion.
+            # 6. Persist conversation to DB on thread pool (sync SQLAlchemy ops)
             answer = buffer.strip()
-            MessageRepository.create(db, session_id, "user", request.question)
             sources_json = json.dumps(sources, ensure_ascii=False)
-            MessageRepository.create(db, session_id, "assistant", answer, sources_json)
-            db.commit()
-            
-            # 7. Auto-generate title using AI if it's currently a default/new title
-            if session.title == "Cuộc trò chuyện mới" or not session.title.strip():
-                try:
-                    from llama_index.core import Settings as LlamaIndexSettings
-                    prompt = (
-                        "Tạo một tiêu đề ngắn gọn (tối đa 6 từ) bằng Tiếng Việt tóm tắt cho câu hỏi sau. "
-                        "Không cần giải thích, chỉ trả về đúng tiêu đề.\n"
-                        f"Câu hỏi: {request.question}"
-                    )
-                    ai_title_response = LlamaIndexSettings.llm.complete(prompt)
-                    title_candidate = ai_title_response.text.strip().replace('"', '').replace("'", "")
-                    
-                    if not title_candidate:
-                        title_candidate = " ".join(request.question.split()[:6]) + "..."
-                        
-                    if len(title_candidate) > 40:
-                        title_candidate = title_candidate[:37] + "..."
-                        
-                    SessionRepository.update_title(db, session, title_candidate)
-                except Exception as e:
-                    # Fallback to simple title if AI generation fails
-                    logger.warning(f"Warning: AI title generation failed: {e}")
-                    words = request.question.split()
-                    title_candidate = " ".join(words[:6])
-                    if len(title_candidate) > 40:
-                        title_candidate = title_candidate[:37] + "..."
-                    SessionRepository.update_title(db, session, title_candidate)
-                
+            session_title = session.title
+            question_text = request.question
+
+            def _persist_and_update_title():
+                MessageRepository.create(db, session_id, "user", question_text)
+                MessageRepository.create(db, session_id, "assistant", answer, sources_json)
                 db.commit()
+
+                # 7. Auto-generate title if still default
+                if session_title == "Cuộc trò chuyện mới" or not session_title.strip():
+                    try:
+                        from llama_index.core import Settings as LlamaIndexSettings
+                        prompt = (
+                            "Tạo một tiêu đề ngắn gọn (tối đa 6 từ) bằng Tiếng Việt tóm tắt cho câu hỏi sau. "
+                            "Không cần giải thích, chỉ trả về đúng tiêu đề.\n"
+                            f"Câu hỏi: {question_text}"
+                        )
+                        # Use sync complete since we're already in a thread
+                        ai_title_response = LlamaIndexSettings.llm.complete(prompt)
+                        title_candidate = ai_title_response.text.strip().replace('"', '').replace("'", "")
+                        if not title_candidate:
+                            title_candidate = " ".join(question_text.split()[:6]) + "..."
+                        if len(title_candidate) > 40:
+                            title_candidate = title_candidate[:37] + "..."
+                        SessionRepository.update_title(db, session, title_candidate)
+                    except Exception as title_err:
+                        logger.warning(f"AI title generation failed: {title_err}")
+                        words = question_text.split()
+                        title_candidate = " ".join(words[:6])
+                        if len(title_candidate) > 40:
+                            title_candidate = title_candidate[:37] + "..."
+                        SessionRepository.update_title(db, session, title_candidate)
+                    db.commit()
+
+            await loop.run_in_executor(None, _persist_and_update_title)
 
             yield f"data: {json.dumps({'sources': sources}, ensure_ascii=False)}\n\n"
             yield "data: [DONE]\n\n"
-            
+
         except Exception as e:
-            db.rollback()
-            logger.error(f"Error processing chat message: {e}")
+            logger.error(f"Error processing chat message: {e}", exc_info=True)
             yield f"data: {json.dumps({'error': str(e)}, ensure_ascii=False)}\n\n"
             yield "data: [DONE]\n\n"

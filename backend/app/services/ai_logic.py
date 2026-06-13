@@ -1,5 +1,9 @@
+import logging
+import os
 import torch
+import warnings
 import nest_asyncio
+import transformers
 from app.config                             import settings
 from llama_index.llms.ollama                import Ollama
 from llama_index.core                       import Settings as LlamaIndexSettings
@@ -15,6 +19,22 @@ def initialize_ai():
     Configures Ollama LLM and HuggingFace Embedding model. Also patches
     a known position_ids buffer corruption issue in SentenceTransformers.
     """
+    # Suppress transformers deprecation warnings to clean up the logs
+    warnings.filterwarnings("ignore", message=".*get_extended_attention_mask.*")
+    transformers.logging.set_verbosity_error()
+    transformers.logging.disable_progress_bar()
+
+    # Keep dependency request/model-loading chatter out of backend INFO logs.
+    for logger_name in ("httpx", "httpcore", "huggingface_hub", "sentence_transformers"):
+        logging.getLogger(logger_name).setLevel(logging.WARNING)
+
+    try:
+        from huggingface_hub.utils import disable_progress_bars
+
+        disable_progress_bars()
+    except ImportError:
+        pass
+
     logger.info("🚀 [AI Logic] Starting AI System initialization...")
     nest_asyncio.apply()
 
@@ -24,19 +44,28 @@ def initialize_ai():
         base_url=settings.OLLAMA_BASE_URL,
         request_timeout=120.0,
         system=(
-            "Bạn là trợ lý AI chuyên gia về Luật pháp Việt Nam. "
-            "Nhiệm vụ của bạn là dựa vào ngữ cảnh được cung cấp để trả lời câu hỏi một cách chính xác, khách quan. "
-            "Bạn CHỈ ĐƯỢC PHÉP trả lời bằng Tiếng Việt. Tuyệt đối không sử dụng tiếng Trung hoặc bất kỳ ngôn ngữ nào khác."
+            "Bạn là một chuyên gia tư vấn pháp luật Việt Nam vô cùng tận tâm, chuyên nghiệp và có chuyên môn cao. "
+            "Nhiệm vụ của bạn là giải đáp các thắc mắc pháp lý của người dùng một cách chính xác, khách quan và dễ hiểu. "
+            "TUYỆT ĐỐI CHỈ SỬ DỤNG thông tin từ dữ liệu được cung cấp. KHÔNG ĐƯỢC TỰ BỊA RA (hallucinate) các văn bản luật, nghị định, thông tư nếu chúng không có trong dữ liệu. "
+            "Tuyệt đối không sử dụng các cụm từ máy móc như 'dựa vào ngữ cảnh được cung cấp' hay 'theo tài liệu'. Hãy trả lời tự nhiên như một luật sư đang tư vấn. "
+            "Bạn CHỈ ĐƯỢC PHÉP trả lời bằng Tiếng Việt. Tuyệt đối không sử dụng bất kỳ ngôn ngữ nào khác."
         )
     )
     logger.info(f"✅ [AI Logic] Connected to LLM: {settings.OLLAMA_MODEL}")
 
     # 2. Embedding Model Configuration
+    # Force HuggingFace to use cached model only — no network calls on startup
+    os.environ.setdefault("HF_HUB_OFFLINE", "1")
+    os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+    os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
+    os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+
     device = "cuda" if torch.cuda.is_available() else "cpu"
     LlamaIndexSettings.embed_model = HuggingFaceEmbedding(
         model_name=settings.EMBEDDING_MODEL,
         device=device,
-        trust_remote_code=True
+        trust_remote_code=True,
+        cache_folder="/root/.cache/huggingface/hub",
     )
     
     # Patch position_ids buffer corruption issue due to transformers>=5.0 meta-device loading
