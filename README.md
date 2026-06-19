@@ -14,7 +14,7 @@
 
 *Your personal, offline-capable AI brain. Feed it documents, ask questions, and get precise, cited answers.*
 
-![Chat Demo](placeholder_chat_demo.gif)
+![Chat Demo](assets/chat-demo.gif)
 
 [English](#english) | [Tiếng Việt](#tiếng-việt)
 
@@ -155,7 +155,7 @@ docker compose up --build -d
 ```
 Once the containers are healthy, open `http://localhost:3000` in your browser.
 
-![Admin Upload Demo](placeholder_admin_upload.gif)
+![Admin Upload Demo](assets/admin-upload.gif)
 
 ## 🛠️ Customization Notes (For Developers)
 
