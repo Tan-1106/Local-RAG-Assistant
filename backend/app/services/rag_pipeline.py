@@ -6,7 +6,6 @@ from qdrant_client.http                 import models as qdrant_models
 from llama_index.core.storage.docstore  import SimpleDocumentStore
 from llama_index.core.node_parser       import HierarchicalNodeParser, get_leaf_nodes
 from llama_index.core                   import SimpleDirectoryReader, StorageContext, VectorStoreIndex
-from llama_index.readers.file           import PyMuPDFReader
 from app.config                         import settings
 from app.db.qdrant_store                import init_qdrant_vector_store
 from app.logger                         import get_logger
@@ -128,12 +127,16 @@ def background_ingest_uploaded_documents(staging_dir: str, filenames: list[str],
         logger.info(f"Background ingestion of {len(filenames)} files completed successfully.")
         if task_id:
             TaskTrackerService().update_task_status(task_id, "completed")
+        shutil.rmtree(staging_dir, ignore_errors=True)
     except Exception as e:
         logger.error(f"Background ingestion failed: {e}")
         if task_id:
             TaskTrackerService().update_task_status(task_id, "failed", error=str(e))
-    finally:
-        shutil.rmtree(staging_dir, ignore_errors=True)
+        import rq
+        job = rq.get_current_job()
+        if not job or getattr(job, 'retries_left', 0) == 0:
+            shutil.rmtree(staging_dir, ignore_errors=True)
+        raise
 
 def _ingest_documents(data_path: str = None, specific_files: list[str] = None):
     """
@@ -146,14 +149,16 @@ def _ingest_documents(data_path: str = None, specific_files: list[str] = None):
     if specific_files:
         input_files = [os.path.join(path, f) for f in specific_files if os.path.exists(os.path.join(path, f))]
         if not input_files:
-            logger.info("No specific files found to ingest.")
-            return
+            logger.error("No specific files found to ingest.")
+            raise FileNotFoundError("No specific files found to ingest.")
     else:
         if not os.path.exists(path) or len(os.listdir(path)) == 0:
             logger.info(f"No documents found in {path}. Please add documents to ingest.")
             return
 
-    file_extractor = {".pdf": PyMuPDFReader()}
+    from app.services.smart_pdf_reader import SmartPDFReader
+
+    file_extractor = {".pdf": SmartPDFReader()}
     if input_files:
         documents = SimpleDirectoryReader(
             input_files=input_files,

@@ -18,6 +18,8 @@ accelerate>=0.34.0
 # PDF Processing
 pypdf>=5.0.0
 pymupdf>=1.24.0
+Pillow>=10.0.0
+pytesseract>=0.3.10
 llama-index-readers-file>=0.1.0
 
 # Relational Database

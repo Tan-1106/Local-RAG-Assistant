@@ -433,6 +433,7 @@ export default function ChatDashboard() {
             </div>
           </div>
           <iframe
+            key={selectedPdfUrl}
             src={selectedPdfUrl}
             className="pdf-iframe"
             title={t('chat.pdf_viewer_title')}

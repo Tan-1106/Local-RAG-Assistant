@@ -254,43 +254,46 @@ class SessionService:
             accumulated_json = ""
             extracted_answer = ""
 
-            def get_incomplete_answer(jstr: str) -> str:
-                if '"answer"' in jstr:
-                    match = re.search(r'"answer"\s*:\s*"(.*)', jstr, re.DOTALL)
-                    if not match:
-                        return ""
-                    val = match.group(1)
-                else:
-                    stripped = jstr.lstrip()
-                    if stripped and not stripped.startswith('{') and not stripped.startswith('`') and not stripped.startswith('['):
-                        return jstr
-                    return ""
-                
-                res = ""
-                i = 0
-                while i < len(val):
-                    if val[i] == '\\':
-                        if i + 1 < len(val):
-                            if val[i+1] == 'n': res += '\n'
-                            elif val[i+1] == '"': res += '"'
-                            elif val[i+1] == '\\': res += '\\'
-                            elif val[i+1] == 't': res += '\t'
-                            else: res += val[i+1]
-                            i += 2
+            def get_logical_response(jstr: str) -> str:
+                match = re.search(r'(.*?)(?:```(?:json)?\s*)?\{[\s\n]*"answer"\s*:\s*"(.*)', jstr, re.DOTALL)
+                if match:
+                    preamble = match.group(1).lstrip()
+                    val = match.group(2)
+                    res = ""
+                    i = 0
+                    while i < len(val):
+                        if val[i] == '\\':
+                            if i + 1 < len(val):
+                                if val[i+1] == 'n': res += '\n'
+                                elif val[i+1] == '"': res += '"'
+                                elif val[i+1] == '\\': res += '\\'
+                                elif val[i+1] == 't': res += '\t'
+                                else: res += val[i+1]
+                                i += 2
+                            else:
+                                break # incomplete escape
+                        elif val[i] == '"':
+                            break # end of string!
                         else:
-                            break # incomplete escape
-                    elif val[i] == '"':
-                        break # end of string!
-                    else:
-                        res += val[i]
-                        i += 1
-                return res
+                            res += val[i]
+                            i += 1
+                            
+                    preamble = preamble.rstrip()
+                    if preamble:
+                        return preamble + "\n\n" + res
+                    return res
+
+                match_potential_json = re.search(r'(.*?)(?:```(?:json)?\s*|\{)', jstr, re.DOTALL)
+                if match_potential_json:
+                    return match_potential_json.group(1).lstrip()
+                
+                return jstr.lstrip()
 
             async for chunk in response_gen:
                 token = chunk.delta
                 if token:
                     accumulated_json += token
-                    new_ans = get_incomplete_answer(accumulated_json)
+                    new_ans = get_logical_response(accumulated_json)
                     if len(new_ans) > len(extracted_answer):
                         delta = new_ans[len(extracted_answer):]
                         extracted_answer = new_ans
@@ -298,6 +301,13 @@ class SessionService:
             
             # Stream finished, save the parsed answer
             final_answer = extracted_answer if extracted_answer else accumulated_json.strip()
+            
+            # Flush any remaining buffer if it was a plain text response that just happened to contain a `{`
+            if '"answer"' not in accumulated_json:
+                final_answer = accumulated_json.strip()
+                if len(final_answer) > len(extracted_answer):
+                    delta = final_answer[len(extracted_answer):]
+                    yield f"data: {json.dumps({'chunk': delta}, ensure_ascii=False)}\n\n"
 
             # 5. Extract used_sources and filter
             used_sources = []
