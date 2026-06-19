@@ -298,4 +298,4 @@ def get_document_file(
     # Determine the correct media type, defaulting to octet-stream
     media_type = "application/pdf" if filename.lower().endswith(".pdf") else "application/octet-stream"
     
-    return FileResponse(file_path, media_type=media_type, filename=filename)
+    return FileResponse(file_path, media_type=media_type, content_disposition_type="inline", filename=filename)

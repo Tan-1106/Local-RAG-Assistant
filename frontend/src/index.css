@@ -954,6 +954,11 @@ textarea:focus-visible,
 
 /* Upload Zone */
 .upload-zone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
   border: 2px dashed var(--border);
   border-radius: var(--radius-lg);
   padding: 2.5rem 1.5rem;

@@ -167,24 +167,14 @@ export default function ChatDashboard() {
     }
   };
 
-  const handleOpenSource = async (filename: string) => {
-    const previewWindow = window.open('about:blank', '_blank', 'noopener,noreferrer');
-    if (previewWindow) previewWindow.opener = null;
-    try {
-      const response = await apiFetch(`${API_BASE_URL}/documents/file/${encodeURIComponent(filename)}`);
-      if (!response.ok) throw new Error(`Document request failed with status ${response.status}`);
-      const blobUrl = URL.createObjectURL(await response.blob());
-      if (previewWindow) {
-        previewWindow.location.href = blobUrl;
-      } else {
-        const link = document.createElement('a');
-        link.href = blobUrl; link.target = '_blank'; link.rel = 'noopener noreferrer'; link.click();
-      }
-      window.setTimeout(() => URL.revokeObjectURL(blobUrl), 300_000);
-    } catch (error) {
-      previewWindow?.close();
-      console.error(error);
-      setError('Không thể mở tài liệu nguồn.');
+  const handleOpenSource = (filename: string, pageLabel: string | number) => {
+    let docUrl = `${API_BASE_URL}/documents/file/${encodeURIComponent(filename)}`;
+    if (filename.toLowerCase().endsWith('.pdf') && pageLabel && pageLabel !== 'N/A') {
+      docUrl += `#page=${pageLabel}`;
+    }
+    const previewWindow = window.open(docUrl, '_blank', 'noopener,noreferrer');
+    if (!previewWindow) {
+      setError('Trình duyệt đã chặn popup. Vui lòng cho phép popup để xem tài liệu.');
     }
   };
 
@@ -202,7 +192,7 @@ export default function ChatDashboard() {
               <button
                 key={`${filename}-${index}`}
                 type="button"
-                onClick={() => handleOpenSource(filename)}
+                onClick={() => handleOpenSource(filename, pageLabel)}
                 disabled={!filename}
                 className="source-card"
               >
