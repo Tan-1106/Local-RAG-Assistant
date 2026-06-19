@@ -173,24 +173,55 @@ class SessionService:
             
             context_str = ""
             for i, node in enumerate(source_nodes, 1):
-                page = node.metadata.get("page_label") or node.metadata.get("source", "N/A")
                 file_name = node.metadata.get("file_name", "Tài liệu")
-                context_str += f"\n--- [Nguồn {i} - {file_name} (Trang {page} của PDF)] ---\n{node.text.strip()}\n"
+                context_str += f"\n[SYS:{i}] {file_name}\n{node.text.strip()}\n"
 
-            CUSTOM_SYSTEM_PROMPT = (
-                "Bạn là một Luật sư, chuyên gia tư vấn pháp luật Việt Nam vô cùng tận tâm và chuyên nghiệp.\n"
-                "Bạn ĐƯỢC CUNG CẤP một cơ sở dữ liệu pháp luật (ngữ cảnh) bên dưới. Hãy đọc kỹ và dùng CHỈ thông tin từ đó để tư vấn cho người dùng.\n"
-                "TUYỆT ĐỐI KHÔNG tự bịa ra các Điều luật, Nghị định hay Thông tư không có trong cơ sở dữ liệu.\n"
-                "Khi trả lời, hãy nói chuyện tự nhiên như một luật sư với thân chủ. KHÔNG DÙNG các câu như: 'Theo ngữ cảnh được cung cấp', 'Theo cơ sở dữ liệu', 'Tài liệu không nói rõ'. Hãy nói: 'Theo quy định pháp luật hiện hành...'.\n"
-                "Nếu trong cơ sở dữ liệu không quy định mức cụ thể, hãy diễn đạt tự nhiên dựa trên phần thông tin có sẵn. Nếu hoàn toàn không có thông tin, hãy nói: 'Rất tiếc, tôi chưa tìm thấy quy định cụ thể về vấn đề này trong hệ thống.'\n"
-                "BẠN PHẢI TRẢ VỀ ĐÚNG ĐỊNH DẠNG JSON. KHÔNG BAO GIỜ TRẢ VỀ TEXT THUẦN.\n"
-                "Định dạng JSON yêu cầu:\n"
-                "{\n"
-                '  "answer": "Nội dung câu trả lời của bạn. CHÚ Ý QUAN TRỌNG: Nếu văn bản trích dẫn có số trang in (ví dụ Trang 10) nhưng [Nguồn] là (Trang 14 của PDF), bạn PHẢI nêu số trang của file PDF (tức là Trang 14) để đồng bộ với hệ thống tra cứu! Hãy thêm [ID] của nguồn vào cuối câu (ví dụ: [1][3]).",\n'
-                '  "used_sources": [1, 3] // Mảng số nguyên chứa các ID của Nguồn (từ 1 đến N) mà bạn THỰC SỰ đã sử dụng để đưa ra câu trả lời.\n'
-                "}\n"
-                f"\n=== CƠ SỞ DỮ LIỆU PHÁP LUẬT ===\n{context_str}"
-            )
+            CUSTOM_SYSTEM_PROMPT = f"""Bạn là một trợ lý AI chuyên tư vấn pháp luật Việt Nam. Hành xử như một luật sư tận tâm, chuyên nghiệp.
+            
+            ## QUY TẮC TUYỆT ĐỐI
+            - Chỉ sử dụng thông tin có trong CƠ SỞ DỮ LIỆU bên dưới. Không bịa đặt điều luật, nghị định, hay thông tư không có trong đó.
+            - Nói chuyện tự nhiên như luật sư với thân chủ. Không dùng cụm: "Theo ngữ cảnh được cung cấp", "Theo tài liệu", "Cơ sở dữ liệu không đề cập". Hãy nói: "Theo quy định pháp luật hiện hành...".
+            - Ký hiệu [SYS:N] trong cơ sở dữ liệu là mã nội bộ của hệ thống để theo dõi nguồn. TUYỆT ĐỐI KHÔNG nhắc đến [SYS:N], "Nguồn", hay bất kỳ số thứ tự nào trong câu trả lời.
+
+            ## PHÂN LOẠI CÂU HỎI VÀ CÁCH XỬ LÝ
+
+            ### Loại 1: Chào hỏi / Hỏi về bản thân trợ lý
+            Ví dụ: "Xin chào", "Bạn là ai?", "Bạn có thể làm gì?"
+            → Trả lời bằng văn bản thường, tự nhiên, ngắn gọn. KHÔNG nhắc đến bất kỳ tài liệu hay văn bản pháp luật nào.
+            → KHÔNG dùng JSON.
+
+            ### Loại 2: Câu hỏi ngoài phạm vi pháp luật
+            Ví dụ: Nấu ăn, toán học, lập trình, giải trí, thể thao, y tế, v.v.
+            → Từ chối DỨT KHOÁT, lịch sự bằng văn bản thường. Chỉ nói rõ bạn chỉ hỗ trợ pháp luật Việt Nam.
+            → KHÔNG được gợi ý, đề nghị hỗ trợ thêm, hay trả lời "một phần" nội dung ngoài lề dù người dùng có hỏi thêm nhiều lần.
+            → KHÔNG dùng JSON.
+
+            ### Loại 3: Câu hỏi pháp lý
+            → Trả về JSON theo đúng định dạng sau. KHÔNG thêm bất kỳ văn bản nào bên ngoài JSON.
+
+            ```json
+            {{
+            "answer": "<nội dung câu trả lời>",
+            "used_sources": [<danh sách số N từ các [SYS:N] mà bạn đã sử dụng>]
+            }}
+            ```
+
+            #### Quy tắc viết "answer":
+            - Trích dẫn bằng cách nêu tên điều khoản và tên văn bản pháp luật tự nhiên trong câu. Ví dụ: "Theo Điều 7 Thông tư 23/2026/TT-BTC, mức chi là 500.000 đồng/ngày công."
+            - TUYỆT ĐỐI KHÔNG viết [SYS:N], [1], [2], "Nguồn 1", "Nguồn [N]", hay bất kỳ số thứ tự nào trong câu trả lời.
+            - KHÔNG đề cập số trang hay vị trí vật lý của tài liệu.
+            - Nếu không có thông tin trong cơ sở dữ liệu, trả lời: "Rất tiếc, tôi chưa tìm thấy quy định cụ thể về vấn đề này trong hệ thống."
+
+            #### Quy tắc điền "used_sources":
+            - Liệt kê các số N (số nguyên) từ [SYS:N] của các đoạn bạn thực sự đã dùng để trả lời.
+            - Ví dụ: nếu dùng [SYS:1] và [SYS:3], điền [1, 3].
+            - Nếu không dùng nguồn nào, điền [].
+
+            ---
+
+            === CƠ SỞ DỮ LIỆU PHÁP LUẬT ===
+            {context_str}"""
+            
 
             from llama_index.core.base.llms.types import ChatMessage, MessageRole
             from app.services.ai_logic import LlamaIndexSettings
@@ -224,10 +255,16 @@ class SessionService:
             extracted_answer = ""
 
             def get_incomplete_answer(jstr: str) -> str:
-                match = re.search(r'"answer"\s*:\s*"(.*)', jstr, re.DOTALL)
-                if not match:
+                if '"answer"' in jstr:
+                    match = re.search(r'"answer"\s*:\s*"(.*)', jstr, re.DOTALL)
+                    if not match:
+                        return ""
+                    val = match.group(1)
+                else:
+                    stripped = jstr.lstrip()
+                    if stripped and not stripped.startswith('{') and not stripped.startswith('`') and not stripped.startswith('['):
+                        return jstr
                     return ""
-                val = match.group(1)
                 
                 res = ""
                 i = 0
@@ -278,24 +315,35 @@ class SessionService:
             except Exception as e:
                 logger.error(f"Failed to parse final JSON for used_sources: {e}. Attempting regex fallback.")
                 import re
-                match = re.search(r'"used_sources"\s*:\s*\[(.*?)\]', clean_json, re.DOTALL)
+                match = re.search(r'"used_sources"\s*:\s*\[(.*?)\]', accumulated_json, re.DOTALL)
                 if match:
                     numbers_str = match.group(1)
                     used_sources = [int(n.strip()) for n in numbers_str.split(',') if n.strip().isdigit()]
                 else:
-                    # Fallback: keep all sources if JSON is malformed
-                    used_sources = [i for i in range(1, len(source_nodes) + 1)]
+                    # Fallback: keep all sources only if JSON is malformed but we have extracted an answer
+                    # and the response actually started as JSON
+                    stripped = accumulated_json.lstrip()
+                    looks_like_json = stripped.startswith('{') or stripped.startswith('`') or stripped.startswith('[')
+                    if extracted_answer and looks_like_json:
+                        used_sources = [i for i in range(1, len(source_nodes) + 1)]
+                    else:
+                        used_sources = []
 
+            seen_sources = set()
             filtered_sources = []
-            fallback_mode = len(used_sources) == 0
             
             for i, node in enumerate(source_nodes, 1):
-                if fallback_mode or i in used_sources or str(i) in used_sources:
-                    filtered_sources.append({
-                        "score": float(getattr(node, "score", 1.0) or 1.0),
-                        "text": node.text if hasattr(node, "text") else getattr(node.node, "text", ""),
-                        "metadata": node.metadata if hasattr(node, "metadata") else getattr(node.node, "metadata", {})
-                    })
+                if i in used_sources or str(i) in used_sources:
+                    file_name = node.metadata.get("file_name", "") if hasattr(node, "metadata") else getattr(node.node, "metadata", {}).get("file_name", "")
+                    page = node.metadata.get("page_label", "") if hasattr(node, "metadata") else getattr(node.node, "metadata", {}).get("page_label", "")
+                    source_key = f"{file_name}:::{page}"
+                    if source_key not in seen_sources:
+                        seen_sources.add(source_key)
+                        filtered_sources.append({
+                            "score": float(getattr(node, "score", 1.0) or 1.0),
+                            "text": node.text if hasattr(node, "text") else getattr(node.node, "text", ""),
+                            "metadata": node.metadata if hasattr(node, "metadata") else getattr(node.node, "metadata", {})
+                        })
             
             # 6. Persist conversation to DB on thread pool (sync SQLAlchemy ops)
             sources_json = json.dumps(filtered_sources, ensure_ascii=False)
@@ -308,7 +356,7 @@ class SessionService:
                 db.commit()
 
                 # 7. Auto-generate title if still default
-                if session_title == "Cuộc trò chuyện mới" or not session_title.strip():
+                if session_title == "Cuộc trò chuyện mới" or session_title == "New Chat" or not session_title.strip():
                     try:
                         from llama_index.core import Settings as LlamaIndexSettings
                         prompt = (
