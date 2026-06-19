@@ -494,13 +494,22 @@ export default function AdminDocumentsPage() {
         {/* Tasks */}
         {tasks.length > 0 && (
           <div className="admin-card glass-panel">
-            <div className="admin-card-header">
+            <div className="admin-card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <span className="admin-card-title">
                 <Loader2 size={16} />
                 {t('admin.bg_tasks')}
               </span>
+              <button 
+                className="btn btn-ghost" 
+                style={{ padding: '0.2rem 0.5rem', fontSize: '0.75rem', height: 'auto' }}
+                onClick={() => setTasks(prev => prev.filter(t => t.status === 'queued' || t.status === 'processing'))}
+                title="Clear completed tasks"
+              >
+                <Trash2 size={13} style={{ marginRight: '4px', display: 'inline' }} />
+                {t('common.clear', 'Clear')}
+              </button>
             </div>
-            <div className="admin-card-body flex-col gap-3">
+            <div className="admin-card-body flex-col gap-3" style={{ maxHeight: '300px', overflowY: 'auto' }}>
               {tasks.map(task => (
                 <div key={task.task_id} className={`task-status ${task.status === 'completed' ? 'completed' : task.status === 'failed' ? 'failed' : 'queued'}`}>
                   <div className="flex items-center gap-2 shrink-0">

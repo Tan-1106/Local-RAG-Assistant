@@ -145,7 +145,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (response.status !== 401) return response;
 
     const refreshedUser = await refreshSession();
-    const mayRetry = retryOnAuth ?? SAFE_RETRY_METHODS.has(method);
+    // Default to true to auto-retry all requests (including POST/PUT/DELETE) upon successful token refresh
+    const mayRetry = retryOnAuth ?? true;
     if (!refreshedUser || !mayRetry) return response;
 
     const retryHeaders = new Headers(requestInit.headers);

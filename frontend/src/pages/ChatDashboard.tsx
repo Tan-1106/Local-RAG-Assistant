@@ -135,11 +135,13 @@ export default function ChatDashboard() {
       sessionId,
       userMessage,
       (chunk) => {
+        // Safety filter: strip any leaked internal [SYS:N] reference tags
+        const cleanChunk = chunk.replace(/\[SYS:\d+\]\s*/g, '');
         setMessagesBySession(previous => ({
           ...previous,
           [sessionId]: (previous[sessionId] ?? []).map(message =>
             message.id === tempAssistantMsg.id
-              ? { ...message, content: message.content + chunk }
+              ? { ...message, content: message.content + cleanChunk }
               : message
           ),
         }));

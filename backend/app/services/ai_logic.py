@@ -38,18 +38,30 @@ def initialize_ai():
     logger.info("🚀 [AI Logic] Starting AI System initialization...")
     nest_asyncio.apply()
 
-    # 1. LLM Configuration (Qwen2.5:7b via Ollama)
+    _system_prompt = (
+        "Bạn là một chuyên gia tư vấn pháp luật Việt Nam vô cùng tận tâm, chuyên nghiệp và có chuyên môn cao. "
+        "Nhiệm vụ của bạn là giải đáp các thắc mắc pháp lý của người dùng một cách chính xác, khách quan và dễ hiểu. "
+        "TUYỆT ĐỐI CHỈ SỬ DỤNG thông tin từ dữ liệu được cung cấp. KHÔNG ĐƯỢC TỰ BỊA RA (hallucinate) các văn bản luật, nghị định, thông tư nếu chúng không có trong dữ liệu. "
+        "Tuyệt đối không sử dụng các cụm từ máy móc như 'dựa vào ngữ cảnh được cung cấp' hay 'theo tài liệu'. Hãy trả lời tự nhiên như một luật sư đang tư vấn. "
+        "Bạn CHỈ ĐƯỢC PHÉP trả lời bằng Tiếng Việt. Tuyệt đối không sử dụng bất kỳ ngôn ngữ nào khác."
+    )
+
+    # 1a. Default LLM — used for plain-text tasks (title gen, greetings, off-topic rejection)
     LlamaIndexSettings.llm = Ollama(
         model=settings.OLLAMA_MODEL,
         base_url=settings.OLLAMA_BASE_URL,
         request_timeout=120.0,
-        system=(
-            "Bạn là một chuyên gia tư vấn pháp luật Việt Nam vô cùng tận tâm, chuyên nghiệp và có chuyên môn cao. "
-            "Nhiệm vụ của bạn là giải đáp các thắc mắc pháp lý của người dùng một cách chính xác, khách quan và dễ hiểu. "
-            "TUYỆT ĐỐI CHỈ SỬ DỤNG thông tin từ dữ liệu được cung cấp. KHÔNG ĐƯỢC TỰ BỊA RA (hallucinate) các văn bản luật, nghị định, thông tư nếu chúng không có trong dữ liệu. "
-            "Tuyệt đối không sử dụng các cụm từ máy móc như 'dựa vào ngữ cảnh được cung cấp' hay 'theo tài liệu'. Hãy trả lời tự nhiên như một luật sư đang tư vấn. "
-            "Bạn CHỈ ĐƯỢC PHÉP trả lời bằng Tiếng Việt. Tuyệt đối không sử dụng bất kỳ ngôn ngữ nào khác."
-        )
+        system=_system_prompt,
+    )
+
+    # 1b. JSON-mode LLM — enforces valid JSON output at the Ollama API level.
+    # Used exclusively for legal Q&A where structured {answer, used_sources} is required.
+    LlamaIndexSettings.chat_llm = Ollama(  # type: ignore[attr-defined]
+        model=settings.OLLAMA_MODEL,
+        base_url=settings.OLLAMA_BASE_URL,
+        request_timeout=120.0,
+        json_mode=True,
+        system=_system_prompt,
     )
     logger.info(f"✅ [AI Logic] Connected to LLM: {settings.OLLAMA_MODEL}")
 

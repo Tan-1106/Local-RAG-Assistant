@@ -40,30 +40,99 @@ Currently pre-configured as a **Legal Assistant** (with Vietnamese document embe
 - 🌐 **Multilingual Interface (i18n)**: Instantly toggle between English and Vietnamese UI.
 - 🛡️ **Enterprise-grade Security**: HttpOnly JWT cookies, rotating refresh tokens, CSRF protection, and role-based access control (Admin vs. User).
 
-## 🏗️ Architecture
+> [!IMPORTANT]
+> AI-generated answers can be incomplete or incorrect. Validate important
+> conclusions against authoritative sources and add domain-specific safeguards
+> before using the system in high-stakes environments.
 
-```mermaid
-flowchart LR
-    U[Browser] -->|Same-origin HTTP/SSE| N[Nginx + React SPA]
-    N -->|/api| A[FastAPI]
+## Why This Project
 
-    A --> SQL[(SQLite)]
-    A --> R[(Redis)]
-    A --> Q[(Qdrant)]
-    A --> O[Ollama]
-    A -->|Enqueue ingestion| W[RQ Worker]
+- **Grounded answers:** the assistant is instructed to answer from retrieved
+  documents instead of relying only on model memory.
+- **Language and domain flexibility:** choose an LLM, embedding model, prompt,
+  and document collection that fit the target language and subject.
+- **Traceable research:** answers include source filename, page information,
+  relevance score, and authenticated access to the original file.
+- **Local AI:** Ollama provides model inference without requiring a hosted LLM
+  API.
+- **Operationally durable:** Redis Queue, retries, persistent Redis storage,
+  staged uploads, and versioned retriever invalidation protect ingestion work.
+- **Security-aware design:** rotating refresh sessions, HttpOnly cookies, CSRF
+  validation, role checks, rate limits, upload inspection, and restrictive
+  Nginx headers are built in.
 
-    W --> R
-    W --> Q
-    W --> D[(Document Storage)]
-    W --> E[Hugging Face Embeddings]
-    W --> OCR[Tesseract OCR]
+## Features
 
-    A --> D
-    O --> A
-```
+### User Experience
 
-## 🚀 Quick Start & Deployment
+- Account registration, login, logout, and logout from all devices.
+- Multi-session chat with persistent conversation history.
+- Real-time answers over Server-Sent Events (SSE).
+- Cancelable response generation.
+- Markdown and GitHub-Flavored Markdown rendering.
+- Automatically generated conversation titles.
+- Source cards that open the authenticated original document.
+- Responsive desktop and mobile interface.
+- Runtime validation of API responses and graceful error recovery.
+
+### RAG and Document Processing
+
+- PDF, DOCX, and UTF-8 TXT uploads.
+- PyMuPDF-based PDF extraction.
+- Hierarchical chunks of `1024`, `512`, and `256` tokens with overlap.
+- Hugging Face embeddings with GPU/CPU device detection.
+- Qdrant-backed vector retrieval.
+- LlamaIndex `AutoMergingRetriever` for parent-context reconstruction.
+- Top-12 initial similarity retrieval.
+- Conversation context from the latest 20 messages.
+- Source metadata persisted with every assistant response.
+- Replacement-first re-ingestion so an existing index remains available if a
+  new indexing attempt fails.
+- Cross-process retriever cache invalidation through a Redis index version.
+
+### Administration
+
+- Role-protected document management page.
+- Drag-and-drop multi-file upload.
+- Background ingestion status tracking.
+- Document listing, deletion, and source file access.
+- Destructive bulk operations protected by admin password re-verification.
+- Automatic super-admin creation and credential synchronization from
+  environment variables.
+
+### Security and Reliability
+
+- Bcrypt password hashing.
+- Short-lived JWT access tokens stored in HttpOnly cookies.
+- Opaque refresh tokens stored as SHA-256 hashes in Redis.
+- Atomic refresh-token rotation and server-side session revocation.
+- Double-submit CSRF protection with constant-time token comparison.
+- Origin validation for state-changing browser requests.
+- Redis-backed rate limits for authentication, chat, and administration.
+- Per-user ownership checks for sessions and message history.
+- Path traversal protection for document access and deletion.
+- Streaming upload size enforcement before files reach memory.
+- MIME type, file signature, DOCX structure, and UTF-8 validation.
+- RQ retries, job timeouts, result retention, and failed-job retention.
+- Nginx CSP, frame, content-type, referrer, and permissions headers.
+
+## Technology Stack
+
+| Layer | Technologies |
+|---|---|
+| Frontend | React 19, TypeScript, Vite 8, React Router, React Markdown, Lucide |
+| API | FastAPI, Pydantic, SQLAlchemy |
+| RAG | LlamaIndex, hierarchical parsing, Auto-Merging Retrieval |
+| LLM | Ollama, default `qwen2.5:7b` |
+| Embeddings | Sentence Transformers; current preset: `dangvantuan/vietnamese-document-embedding` |
+| Vector database | Qdrant |
+| Application database | SQLite by default; SQLAlchemy configuration supports another database URL |
+| Queue and cache | Redis 7, RQ |
+| Document extraction | PyMuPDF, PyPDF, LlamaIndex file readers |
+| Delivery | Docker Compose, Nginx |
+| Testing | Pytest, Vitest, Testing Library |
+
+## Quick Start
 
 ### Prerequisites
 - Docker Desktop or Docker Engine + Docker Compose.

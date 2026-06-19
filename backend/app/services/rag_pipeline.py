@@ -277,7 +277,8 @@ def delete_all_documents():
 
         for filename in os.listdir(data_dir):
             file_path = os.path.join(data_dir, filename)
-            if os.path.isfile(file_path):
+            # Only delete actual document files, avoiding db.sqlite3 or other system files
+            if os.path.isfile(file_path) and os.path.splitext(filename)[1].lower() in {".pdf", ".docx", ".txt"}:
                 try:
                     result = _delete_document(filename)
                     if result["deleted_from_disk"]:

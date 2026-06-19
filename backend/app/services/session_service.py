@@ -249,12 +249,20 @@ class SessionService:
                 logger.info("📄 [AI Logic] Không tìm thấy đoạn văn bản context phù hợp nào để gửi đến LLM.")
 
             # 4. Stream tokens asynchronously
-            response_gen = await LlamaIndexSettings.llm.astream_chat(messages)
+            # Use json_mode LLM for legal Q&A (has sources), plain LLM for greetings/off-topic
+            active_llm = getattr(LlamaIndexSettings, 'chat_llm', LlamaIndexSettings.llm) if source_nodes else LlamaIndexSettings.llm
+            response_gen = await active_llm.astream_chat(messages)
             
             accumulated_json = ""
             extracted_answer = ""
 
+            # Regex for complete [SYS:N] tags
+            _SYS_COMPLETE_RE = re.compile(r'\[SYS:\d+\]')
+            # Regex matching any string that is a valid *prefix* of [SYS:N] (e.g. "[", "[S", "[SYS:", "[SYS:1")
+            _SYS_PARTIAL_RE = re.compile(r'\[(?:S(?:Y(?:S(?::\d*)?)?)?)?$')
+
             def get_logical_response(jstr: str) -> str:
+                """Extract the raw answer text from (possibly partial) JSON. No SYS stripping here."""
                 match = re.search(r'(.*?)(?:```(?:json)?\s*)?\{[\s\n]*"answer"\s*:\s*"(.*)', jstr, re.DOTALL)
                 if match:
                     preamble = match.group(1).lstrip()
@@ -273,12 +281,11 @@ class SessionService:
                             else:
                                 break # incomplete escape
                         elif val[i] == '"':
-                            break # end of string!
+                            break # end of string
                         else:
                             res += val[i]
                             i += 1
-                            
-                    preamble = preamble.rstrip()
+
                     if preamble:
                         return preamble + "\n\n" + res
                     return res
@@ -286,58 +293,94 @@ class SessionService:
                 match_potential_json = re.search(r'(.*?)(?:```(?:json)?\s*|\{)', jstr, re.DOTALL)
                 if match_potential_json:
                     return match_potential_json.group(1).lstrip()
-                
+
                 return jstr.lstrip()
+
+            def emit_safe(buf: str) -> tuple[str, str]:
+                """
+                Given a buffer of extracted answer text, strip complete [SYS:N] tags,
+                then split into (safe_to_emit, hold_back).
+                'hold_back' is any suffix that looks like it might be the start of a [SYS:...] tag.
+                """
+                # Strip all complete tags
+                cleaned = _SYS_COMPLETE_RE.sub('', buf)
+                # Hold back any partial tag prefix at the very end
+                m = _SYS_PARTIAL_RE.search(cleaned)
+                if m:
+                    return cleaned[:m.start()], cleaned[m.start():]
+                return cleaned, ''
+
+            # raw_extracted: un-stripped answer text, used only for tracking how much we've parsed
+            raw_extracted = ""
+            # pending_buf: characters waiting to be safely emitted (may contain partial SYS tags)
+            pending_buf = ""
 
             async for chunk in response_gen:
                 token = chunk.delta
                 if token:
                     accumulated_json += token
-                    new_ans = get_logical_response(accumulated_json)
-                    if len(new_ans) > len(extracted_answer):
-                        delta = new_ans[len(extracted_answer):]
-                        extracted_answer = new_ans
-                        yield f"data: {json.dumps({'chunk': delta}, ensure_ascii=False)}\n\n"
-            
+                    new_raw = get_logical_response(accumulated_json)
+                    if len(new_raw) > len(raw_extracted):
+                        pending_buf += new_raw[len(raw_extracted):]
+                        raw_extracted = new_raw
+
+                    safe, pending_buf = emit_safe(pending_buf)
+                    if safe:
+                        extracted_answer += safe
+                        yield f"data: {json.dumps({'chunk': safe}, ensure_ascii=False)}\n\n"
+
+            # Flush pending buffer at end of stream — strip any remnant partial tag
+            if pending_buf:
+                final_buf = _SYS_COMPLETE_RE.sub('', pending_buf)
+                final_buf = _SYS_PARTIAL_RE.sub('', final_buf)  # strip any unfinished tag
+                if final_buf:
+                    extracted_answer += final_buf
+                    yield f"data: {json.dumps({'chunk': final_buf}, ensure_ascii=False)}\n\n"
+
             # Stream finished, save the parsed answer
             final_answer = extracted_answer if extracted_answer else accumulated_json.strip()
-            
+
             # Flush any remaining buffer if it was a plain text response that just happened to contain a `{`
             if '"answer"' not in accumulated_json:
-                final_answer = accumulated_json.strip()
+                # Plain text response (greetings, off-topic) — strip any SYS tags and emit remainder
+                plain = _SYS_COMPLETE_RE.sub('', accumulated_json.strip())
+                plain = _SYS_PARTIAL_RE.sub('', plain)
+                final_answer = plain
                 if len(final_answer) > len(extracted_answer):
                     delta = final_answer[len(extracted_answer):]
                     yield f"data: {json.dumps({'chunk': delta}, ensure_ascii=False)}\n\n"
+
+            # Safety net: strip any leaked SYS tags from the final saved answer
+            final_answer = _SYS_COMPLETE_RE.sub('', final_answer)
+            final_answer = _SYS_PARTIAL_RE.sub('', final_answer)
 
             # 5. Extract used_sources and filter
             used_sources = []
             try:
                 clean_json = accumulated_json.strip()
+                if not clean_json:
+                    raise ValueError("Empty response from model")
                 if clean_json.startswith("```json"):
                     clean_json = clean_json[7:]
                 if clean_json.endswith("```"):
                     clean_json = clean_json[:-3]
-                
+
                 final_data = json.loads(clean_json.strip(), strict=False)
                 used_sources = final_data.get("used_sources", [])
                 if not isinstance(used_sources, list):
                     used_sources = []
             except Exception as e:
-                logger.error(f"Failed to parse final JSON for used_sources: {e}. Attempting regex fallback.")
+                logger.warning(f"Could not parse JSON from LLM response: {e}. Falling back to source extraction.")
                 import re
                 match = re.search(r'"used_sources"\s*:\s*\[(.*?)\]', accumulated_json, re.DOTALL)
                 if match:
                     numbers_str = match.group(1)
                     used_sources = [int(n.strip()) for n in numbers_str.split(',') if n.strip().isdigit()]
-                else:
-                    # Fallback: keep all sources only if JSON is malformed but we have extracted an answer
-                    # and the response actually started as JSON
-                    stripped = accumulated_json.lstrip()
-                    looks_like_json = stripped.startswith('{') or stripped.startswith('`') or stripped.startswith('[')
-                    if extracted_answer and looks_like_json:
-                        used_sources = [i for i in range(1, len(source_nodes) + 1)]
-                    else:
-                        used_sources = []
+                elif final_answer and source_nodes:
+                    # Model answered using retrieved context but didn't return JSON format.
+                    # Show all retrieved sources — better to show all than none.
+                    used_sources = list(range(1, len(source_nodes) + 1))
+                    logger.warning(f"LLM ignored JSON format. Showing all {len(source_nodes)} retrieved sources as fallback.")
 
             seen_sources = set()
             filtered_sources = []
