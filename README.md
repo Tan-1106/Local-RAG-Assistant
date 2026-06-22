@@ -76,7 +76,7 @@ The project is designed for private knowledge bases where documents, chat histor
 
 The admin dashboard is available under `/admin` and requires an account with the `admin` role.
 
-![Admin Upload Demo](assets/admin-upload.gif)
+![Admin Dashboard Demo](assets/admin-dashboard.gif)
 
 ### Document Management
 
@@ -475,7 +475,7 @@ Hệ thống phù hợp với các kho tri thức riêng tư, nơi tài liệu, 
 
 Dashboard admin nằm tại `/admin` và yêu cầu tài khoản có role `admin`.
 
-![Admin Upload Demo](assets/admin-upload.gif)
+![Admin Dashboard Demo](assets/admin-dashboard.gif)
 
 ### Quản lý tài liệu
 
