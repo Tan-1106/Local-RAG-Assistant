@@ -1,7 +1,7 @@
 {
   "auth": {
-    "login_title": "Login - Legal Assistant",
-    "register_title": "Register - Legal Assistant",
+    "login_title": "Login - Local RAG Assistant",
+    "register_title": "Register - Local RAG Assistant",
     "login_heading": "System Login",
     "register_heading": "Create Account",
     "subtitle": "Vietnam Legal AI Platform",
@@ -57,7 +57,7 @@
     "brand_sub": "AI Legal Consulting"
   },
   "chat": {
-    "title": "Legal Assistant",
+    "title": "Local RAG Assistant",
     "disclaimer": "AI can make mistakes. Please verify legal information from official sources.",
     "input_placeholder": "Ask a legal question...",
     "err_blocked": "Browser blocked popup. Please allow popups to view document.",
@@ -75,7 +75,7 @@
   },
   "admin": {
     "title": "Document Management",
-    "subtitle": "Manage documents for the AI Legal Assistant system",
+    "subtitle": "Manage documents for the AI Local RAG Assistant system",
     "upload_btn": "Upload New Document",
     "upload_processing": "Uploading...",
     "drag_drop": "Drag & drop files here",

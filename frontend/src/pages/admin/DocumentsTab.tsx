@@ -18,7 +18,7 @@ interface DocumentListResponse { documents: DocumentInfo[]; total: number; }
 interface IngestResponse { task_id: string; files?: string[]; }
 interface ErrorResponse { detail?: string; }
 
-const TASK_STORAGE_PREFIX = 'legal-assistant-admin-tasks';
+const TASK_STORAGE_PREFIX = 'local-rag-assistant-admin-tasks';
 function storageKey(username: string) { return `${TASK_STORAGE_PREFIX}:${username}`; }
 
 function formatBytes(bytes: number): string {

@@ -11,7 +11,7 @@ load_dotenv()
 
 BASE_URL = "http://localhost:8000/api"
 TIMEOUT = 300  # Prevent indefinite hanging by setting a 5-minute timeout
-CSRF_COOKIE_NAME = os.environ.get("AUTH_CSRF_COOKIE_NAME", "legal_assistant_csrf")
+CSRF_COOKIE_NAME = os.environ.get("AUTH_CSRF_COOKIE_NAME", "local_rag_assistant_csrf")
 
 
 def csrf_headers(client: requests.Session) -> dict[str, str]:

@@ -1,6 +1,6 @@
 <div align="center">
 
-# Legal Assistant - Local RAG Assistant
+# Local RAG Assistant
 
 ### A private, source-grounded RAG platform for legal document Q&A
 
@@ -25,7 +25,7 @@ Ask questions over your private legal documents with local LLMs, source-grounded
 
 ## Overview
 
-Legal Assistant is a full-stack local Retrieval-Augmented Generation (RAG) application for asking questions over private legal documents. It combines a React frontend, FastAPI backend, Ollama local LLM, Qdrant vector database, Redis/RQ background jobs, and LlamaIndex document retrieval.
+Local RAG Assistant is a full-stack local Retrieval-Augmented Generation (RAG) application for asking questions over private legal documents. It combines a React frontend, FastAPI backend, Ollama local LLM, Qdrant vector database, Redis/RQ background jobs, and LlamaIndex document retrieval.
 
 The project is designed for private knowledge bases where documents, chat history, vectors, and model execution remain under your control.
 
@@ -424,7 +424,7 @@ When documents change:
 
 ## Tổng Quan
 
-Legal Assistant là một ứng dụng hỏi đáp tài liệu pháp lý chạy cục bộ theo mô hình Retrieval-Augmented Generation (RAG). Dự án kết hợp frontend React, backend FastAPI, LLM local qua Ollama, vector database Qdrant, Redis/RQ cho tác vụ nền và LlamaIndex để truy hồi tài liệu.
+Local RAG Assistant là một ứng dụng hỏi đáp tài liệu pháp lý chạy cục bộ theo mô hình Retrieval-Augmented Generation (RAG). Dự án kết hợp frontend React, backend FastAPI, LLM local qua Ollama, vector database Qdrant, Redis/RQ cho tác vụ nền và LlamaIndex để truy hồi tài liệu.
 
 Hệ thống phù hợp với các kho tri thức riêng tư, nơi tài liệu, lịch sử chat, vector và quá trình chạy mô hình cần nằm trong hạ tầng do bạn kiểm soát.
 

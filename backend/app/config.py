@@ -4,7 +4,7 @@ from pydantic           import field_validator, model_validator
 from pydantic_settings  import BaseSettings, SettingsConfigDict
 
 # Resolve the absolute path to the project root directory where .env lives
-BASE_DIR = Path(__file__).resolve().parent.parent.parent  # Resolves to Legal Assistant/
+BASE_DIR = Path(__file__).resolve().parent.parent.parent  # Resolves to Local RAG Assistant/
 ENV_PATH = BASE_DIR / ".env"
 
 class Settings(BaseSettings):
@@ -46,9 +46,9 @@ class Settings(BaseSettings):
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
     REFRESH_TOKEN_EXPIRE_DAYS: int = 30
-    AUTH_COOKIE_NAME: str = "legal_assistant_session"
-    AUTH_REFRESH_COOKIE_NAME: str = "legal_assistant_refresh"
-    AUTH_CSRF_COOKIE_NAME: str = "legal_assistant_csrf"
+    AUTH_COOKIE_NAME: str = "local_rag_assistant_session"
+    AUTH_REFRESH_COOKIE_NAME: str = "local_rag_assistant_refresh"
+    AUTH_CSRF_COOKIE_NAME: str = "local_rag_assistant_csrf"
     AUTH_COOKIE_SECURE: bool = False
     AUTH_COOKIE_SAMESITE: Literal["lax", "strict", "none"] = "lax"
     AUTH_COOKIE_PATH: str = "/api"

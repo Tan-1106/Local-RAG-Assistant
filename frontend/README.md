@@ -1,4 +1,4 @@
-# Legal Assistant Frontend
+# Local RAG Assistant Frontend
 
 React + TypeScript frontend for authentication, session-based legal chat, source document viewing, and RAG document administration.
 

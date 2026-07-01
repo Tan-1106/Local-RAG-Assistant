@@ -47,7 +47,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       refreshPromiseRef.current = (
         navigator.locks
-          ? navigator.locks.request('legal-assistant-auth-refresh', refreshInsideLock)
+          ? navigator.locks.request('local-rag-assistant-auth-refresh', refreshInsideLock)
           : refreshInsideLock()
       ).catch(error => {
         console.error('Session refresh failed', error);

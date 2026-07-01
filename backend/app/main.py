@@ -79,7 +79,7 @@ async def lifespan(app: FastAPI):
     pass
 
 
-app = FastAPI(title="Legal Assistant API", lifespan=lifespan)
+app = FastAPI(title="Local RAG Assistant API", lifespan=lifespan)
 
 # Add CORS middleware
 allowed_origins_list = [origin.strip() for origin in settings.ALLOWED_ORIGINS.split(",") if origin.strip()]

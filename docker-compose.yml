@@ -1,4 +1,4 @@
-name: legal-assistant
+name: local-rag-assistant
 
 services:
   # 1. Local AI Model Engine (Ollama)
